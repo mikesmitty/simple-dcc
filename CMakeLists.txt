@@ -70,7 +70,10 @@ add_executable(simple_dcc
     src/main.c
     src/openlcb_user_config.c
     src/dcc/packet.c
+    src/dcc/dcc.c
+    src/dcc/functions.c
     src/wavegen/wavegen.c
+    src/queue/priority_queue.c
 )
 
 # --- PIO programs (must come after add_executable) ---
