@@ -77,6 +77,9 @@ add_executable(simple_dcc
     src/serial/serial.c
     src/protocol/lcc_interface.c
     src/protocol/lcc_traction.c
+    src/motor/motor.c
+    src/track/track.c
+    src/util/event_bus.c
 )
 
 # --- PIO programs (must come after add_executable) ---
