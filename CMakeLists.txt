@@ -74,6 +74,9 @@ add_executable(simple_dcc
     src/dcc/functions.c
     src/wavegen/wavegen.c
     src/queue/priority_queue.c
+    src/serial/serial.c
+    src/protocol/lcc_interface.c
+    src/protocol/lcc_traction.c
 )
 
 # --- PIO programs (must come after add_executable) ---

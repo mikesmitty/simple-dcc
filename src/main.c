@@ -8,6 +8,8 @@
 #include "dcc/dcc.h"
 #include "wavegen/wavegen.h"
 #include "queue/priority_queue.h"
+#include "serial/serial.h"
+#include "protocol/lcc_interface.h"
 
 #define WAVEGEN_QUEUE_DEPTH  8
 #define PQUEUE_INPUT_DEPTH  16
@@ -55,12 +57,15 @@ int main(void) {
 
     pqueue_init(&pqueue, pqueue_input_queue, wavegen_queue);
     dcc_init(&dcc_engine, pqueue_input_queue);
+    lcc_interface_init(&dcc_engine, pqueue_input_queue);
 
     // Create tasks (highest priority first)
-    xTaskCreate(task_wavegen,        "wavegen",  512, &wavegen,    6, NULL);
-    xTaskCreate(task_priority_queue, "pqueue",   512, &pqueue,     5, NULL);
-    xTaskCreate(task_dcc_reminder,   "reminder", 512, &dcc_engine, 3, NULL);
-    xTaskCreate(task_blink,          "blink",    configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+    xTaskCreate(task_wavegen,        "wavegen",   512,  &wavegen,    6, NULL);
+    xTaskCreate(task_priority_queue, "pqueue",    512,  &pqueue,     5, NULL);
+    xTaskCreate(task_dcc_reminder,   "reminder",  512,  &dcc_engine, 3, NULL);
+    xTaskCreate(task_protocol,       "protocol",  1024, NULL,        2, NULL);
+    xTaskCreate(task_serial,         "serial",    1024, NULL,        1, NULL);
+    xTaskCreate(task_blink,          "blink",     configMINIMAL_STACK_SIZE, NULL, 1, NULL);
 
     printf("simple-dcc starting\n");
     vTaskStartScheduler();
