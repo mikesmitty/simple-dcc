@@ -15,8 +15,8 @@ const node_parameters_t OpenLcbUserConfig_node_parameters = {
                          PSI_MEMORY_CONFIGURATION |
                          PSI_EVENT_EXCHANGE |
                          PSI_SIMPLE_NODE_INFORMATION |
-                         PSI_TRACTION_PROTOCOL |
-                         PSI_TRACTION_FDI |
+                         PSI_TRAIN_CONTROL |
+                         PSI_FUNCTION_DESCRIPTION |
                          PSI_CONFIGURATION_DESCRIPTION_INFO),
 
     .consumer_count_autocreate = 0,
@@ -86,7 +86,7 @@ const node_parameters_t OpenLcbUserConfig_node_parameters = {
     .address_space_train_function_config_memory.low_address_valid = false,
     .address_space_train_function_config_memory.low_address = 0,
     .address_space_train_function_config_memory.highest_address = 0,
-    .address_space_train_function_config_memory.address_space = CONFIG_MEM_SPACE_TRAIN_FUNCTION_CONFIG_MEMORY,
+    .address_space_train_function_config_memory.address_space = CONFIG_MEM_SPACE_TRAIN_FUNCTION_CONFIGURATION_MEMORY,
     .address_space_train_function_config_memory.description = "",
 
     .address_space_firmware.read_only = false,

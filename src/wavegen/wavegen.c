@@ -10,8 +10,8 @@
 #include "wavegen_servicemode.pio.h"
 #include "cutout.pio.h"
 
-// Queue for packets to be sent to the PIO
-QueueHandle_t wavegen_queue;
+// Queue for packets to be sent to the PIO (defined in main.c)
+extern QueueHandle_t wavegen_queue;
 
 static bool init_wave_sm(wavegen_t *wg, wavegen_mode_t mode,
                          uint signal_pin, uint signal_pin_count) {

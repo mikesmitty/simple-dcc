@@ -34,8 +34,7 @@ void task_serial(void *params) {
         }
 
         if (OpenLcbGridConnect_copy_out_gridconnect_when_done((uint8_t)ch, &gc_buf)) {
-            can_msg_t can_msg;
-            can_msg.state = 0;
+            can_msg_t can_msg = {0};
             OpenLcbGridConnect_to_can_msg(&gc_buf, &can_msg);
             CanRxStatemachine_incoming_can_driver_callback(&can_msg);
         }

@@ -13,11 +13,11 @@ typedef enum {
 
 typedef struct {
     // Pin config
-    uint    power_pin;
-    uint    signal_pin;
-    uint    brake_pin;
-    uint    fault_pin;
-    uint    adc_channel;
+    uint32_t power_pin;
+    uint32_t signal_pin;
+    uint32_t brake_pin;
+    uint32_t fault_pin;
+    uint32_t adc_channel;
 
     // Current sensing
     uint16_t current_limit;     // ADC units
@@ -37,8 +37,8 @@ typedef struct {
 } motor_t;
 
 void motor_init(motor_t *m, char track_id,
-                uint power_pin, uint signal_pin, uint brake_pin,
-                uint fault_pin, uint adc_channel,
+                uint32_t power_pin, uint32_t signal_pin, uint32_t brake_pin,
+                uint32_t fault_pin, uint32_t adc_channel,
                 uint16_t current_limit);
 void motor_set_power(motor_t *m, bool on);
 void motor_update(motor_t *m);

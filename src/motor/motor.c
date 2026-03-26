@@ -25,8 +25,8 @@ static uint32_t ms_since(uint32_t tick) {
 }
 
 void motor_init(motor_t *m, char track_id,
-                uint power_pin, uint signal_pin, uint brake_pin,
-                uint fault_pin, uint adc_channel,
+                uint32_t power_pin, uint32_t signal_pin, uint32_t brake_pin,
+                uint32_t fault_pin, uint32_t adc_channel,
                 uint16_t current_limit) {
     m->track_id = track_id;
     m->power_pin = power_pin;
