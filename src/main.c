@@ -85,22 +85,28 @@ static void task_blink(void *params) {
 
 int main(void) {
     stdio_init_all();
+    printf("[INIT] simple-dcc boot\n");
+
     packet_pool_init();
+    printf("[INIT] packet pool ready\n");
 
     // Create inter-task queues
     wavegen_queue = xQueueCreate(WAVEGEN_QUEUE_DEPTH, sizeof(dcc_packet_t *));
     pqueue_input_queue = xQueueCreate(PQUEUE_INPUT_DEPTH, sizeof(dcc_packet_t *));
+    printf("[INIT] queues created\n");
 
     // Init wavegen (PIO)
     if (!wavegen_init(&wavegen, WAVEGEN_NORMAL,
                       PIN_SIGNAL_A, 2, PIN_BRAKE_A)) {
-        printf("wavegen init failed\n");
+        printf("[INIT] ERROR: wavegen init failed\n");
         for (;;) {}
     }
+    printf("[INIT] wavegen ready (PIO)\n");
 
     // Init packet scheduling
     pqueue_init(&pqueue, pqueue_input_queue, wavegen_queue);
     dcc_init(&dcc_engine, pqueue_input_queue);
+    printf("[INIT] DCC engine ready\n");
 
     // Init motor drivers and tracks
     motor_init(&motor_a, 'A', PIN_POWER_A, PIN_SIGNAL_A, PIN_BRAKE_A,
@@ -109,10 +115,12 @@ int main(void) {
                PIN_FAULT_B, ADC_CHANNEL_B, ADC_CURRENT_LIMIT_MAIN);
     track_init(&track_main, 'A', TRACK_MODE_MAIN, &motor_a);
     track_init(&track_prog, 'B', TRACK_MODE_PROG, &motor_b);
+    printf("[INIT] motors and tracks ready\n");
 
     // Init event bus and LCC
     event_bus_init(&event_bus);
     lcc_interface_init(&dcc_engine, pqueue_input_queue);
+    printf("[INIT] LCC interface ready\n");
 
     // Create tasks (highest priority first)
     xTaskCreate(task_wavegen,        "wavegen",   512,  &wavegen,         6, NULL);
@@ -122,8 +130,8 @@ int main(void) {
     xTaskCreate(task_protocol,       "protocol",  1024, NULL,             2, NULL);
     xTaskCreate(task_serial,         "serial",    1024, NULL,             1, NULL);
     xTaskCreate(task_blink,          "blink",     configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+    printf("[INIT] tasks created, starting scheduler\n");
 
-    printf("simple-dcc starting\n");
     vTaskStartScheduler();
 
     for (;;) {}

@@ -101,9 +101,10 @@ target_link_libraries(simple_dcc PRIVATE
     openlcb
 )
 
-# USB CDC for serial I/O, disable UART stdio
+# USB CDC for serial I/O, disable UART stdio, enable RTT for debug
 pico_enable_stdio_usb(simple_dcc 1)
 pico_enable_stdio_uart(simple_dcc 0)
+pico_enable_stdio_rtt(simple_dcc 1)
 
 # Generate UF2/BIN/HEX outputs
 pico_add_extra_outputs(simple_dcc)
