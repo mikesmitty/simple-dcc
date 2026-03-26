@@ -69,7 +69,15 @@ target_include_directories(openlcb PUBLIC
 add_executable(simple_dcc
     src/main.c
     src/openlcb_user_config.c
+    src/dcc/packet.c
+    src/wavegen/wavegen.c
 )
+
+# --- PIO programs (must come after add_executable) ---
+pico_generate_pio_header(simple_dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/wavegen.pio)
+pico_generate_pio_header(simple_dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/wavegen_nocutout.pio)
+pico_generate_pio_header(simple_dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/wavegen_servicemode.pio)
+pico_generate_pio_header(simple_dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/cutout.pio)
 
 target_include_directories(simple_dcc PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/src
@@ -79,6 +87,7 @@ target_include_directories(simple_dcc PRIVATE
 target_link_libraries(simple_dcc PRIVATE
     pico_stdlib
     hardware_adc
+    hardware_pio
     FreeRTOS-Kernel-Heap4
     openlcb
 )

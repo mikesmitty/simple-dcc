@@ -1,0 +1,79 @@
+; simple-dcc DCC Waveform Generator (Service Mode)
+; SPDX-License-Identifier: MIT
+
+; Single-pin variant for programming track. Sends reset packets (0x03000000)
+; when the FIFO is empty instead of idle packets.
+
+.program wavegen_servicemode
+
+.wrap_target
+
+set y, 15                  ; Set the preamble length to 16 (n-1)
+preamble:
+    set pins, 0b1     [28] ; Set pin high for the preamble
+    set pins, 0b0     [27] ; Set pin low for the preamble
+    jmp y--, preamble
+
+    ; Message start bit begins with a high half-wave
+    set pins, 0b1
+
+    ; Generate a reset packet (0x03000000) in case the FIFO is empty
+    set x, 3               ; Set x to 3 for the length
+    mov isr, x             ; Byte 1
+    in NULL, 24            ; Byte 2-4
+    mov x, isr             ; Put the pattern into x as the default pull value
+
+    ; Pull the next encoded start packet from the FIFO
+    pull noblock           ; Will receive reset packet from x if FIFO is empty
+    out y, 8               ; Store the byte count of the message in y
+    jmp byte_reset         ; Jump to the byte loop reset
+
+byte_loop:
+    mov isr, y             ; Store the bytes remaining in the ISR
+    jmp mid_zero      [15] ; Jump to the middle section of the separator byte
+
+bit_loop:
+    out y, 1               ; Pull an output bit to y
+    jmp y--, short_low     ; Short-circuit the middle for a 1-bit
+mid_zero:
+    ; Add the extra duration for a zero bit to the middle section
+    nop               [28] ; Zero high part 2
+    set pins, 0b0     [28] ; Zero low part 1
+
+short_low:
+    set pins, 0b0     [28] ; Low half-wave
+
+new_bit:
+    set pins, 0b1     [25] ; High half-wave (starting new bit)
+    jmp x--, bit_loop      ; Loop back for the next bit
+    mov y, isr        [2]  ; Restore the bytes remaining counter from the ISR
+
+byte_reset:
+    set x, 8               ; Set x to 8 for the next byte loop
+    jmp y--, byte_loop     ; Loop back for the next byte
+
+    set pins, 0b0     [27] ; Second half of packet end bit
+
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void wavegen_servicemode_program_init(PIO pio, uint sm, uint offset,
+                                                     uint signal_pin) {
+    pio_sm_config c = wavegen_servicemode_program_get_default_config(offset);
+    sm_config_set_set_pins(&c, signal_pin, 1);
+    sm_config_set_in_shift(&c, false, false, 0);
+    sm_config_set_out_shift(&c, false, true, 32);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    sm_config_set_out_special(&c, true, false, 0);
+
+    pio_gpio_init(pio, signal_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, signal_pin, 1, true);
+
+    float div = (float)clock_get_hz(clk_sys) / 500000.0f;
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
