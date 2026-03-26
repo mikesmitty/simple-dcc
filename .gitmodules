@@ -1,0 +1,3 @@
+[submodule "lib/OpenLcbCLib"]
+	path = lib/OpenLcbCLib
+	url = https://github.com/JimKueneman/OpenLcbCLib.git

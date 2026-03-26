@@ -1,0 +1,11 @@
+build/
+cmake-build-*/
+.vscode/
+.idea/
+*.uf2
+*.elf
+*.bin
+*.hex
+*.dis
+*.map
+.DS_Store
