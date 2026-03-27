@@ -4,10 +4,15 @@ cmake_minimum_required(VERSION 3.13)
 set(PICO_BOARD pico2 CACHE STRING "Target board")
 set(PICO_PLATFORM rp2350-arm-s CACHE STRING "Target platform")
 
-# Pull in Pico SDK (uses PICO_SDK_PATH env var)
-include(pico_sdk_import.cmake)
+# Default to submodule paths; env vars override if set
+if (NOT PICO_SDK_PATH AND NOT DEFINED ENV{PICO_SDK_PATH})
+    set(PICO_SDK_PATH ${CMAKE_CURRENT_LIST_DIR}/lib/pico-sdk)
+endif()
+if (NOT FREERTOS_KERNEL_PATH AND NOT DEFINED ENV{FREERTOS_KERNEL_PATH})
+    set(FREERTOS_KERNEL_PATH ${CMAKE_CURRENT_LIST_DIR}/lib/FreeRTOS-Kernel)
+endif()
 
-# Pull in FreeRTOS Kernel (uses FREERTOS_KERNEL_PATH env var)
+include(pico_sdk_import.cmake)
 include(FreeRTOS_Kernel_import.cmake)
 
 project(simple_dcc C CXX ASM)
