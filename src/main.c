@@ -125,7 +125,7 @@ int main(void) {
 
     // Init event bus and LCC
     event_bus_init(&event_bus);
-    lcc_interface_init(&dcc_engine, pqueue_input_queue);
+    lcc_interface_init(&dcc_engine, &track_main, pqueue_input_queue);
     printf("[INIT] LCC interface ready\n");
 
     // Create tasks (highest priority first)

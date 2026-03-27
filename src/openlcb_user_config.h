@@ -39,6 +39,7 @@ extern "C" {
 #endif
 
 extern const struct node_parameters_TAG OpenLcbUserConfig_node_parameters;
+extern const struct node_parameters_TAG OpenLcbUserConfig_train_node_parameters;
 
 #ifdef __cplusplus
 }
