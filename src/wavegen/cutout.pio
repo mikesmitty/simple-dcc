@@ -1,0 +1,55 @@
+; simple-dcc RailCom Cutout Timer
+; SPDX-License-Identifier: MIT
+
+; Manages the RailCom cutout window by applying/releasing the brake pin.
+;
+; Each loop iteration is 1 cycle (2us @ 500kHz).
+; 216 counts * 2us = 432us loop duration.
+; Total time from packet end bit zero crossing to brake release:
+; 26us (offset) + 434us (loop) + 10us (irq/nop/set) = 470us.
+; This fits within the NMRA S-9.3.2 requirement of 454us - 488us.
+
+.program cutout
+
+.pio_version 1
+
+; Initialize default loop count. 216 = 0xD8 = (13 << 4) | 8
+    set x, 13
+    mov isr, x
+    set x, 8
+    in x, 4               ; ISR = (13 << 4) | 8 = 216
+    mov x, isr            ; X = 216 (Default loop count for pull noblock)
+
+.wrap_target
+    pull noblock           ; OSR = FIFO if not empty, else OSR = X
+    mov y, osr             ; Y = counter for loop
+    wait 1 irq 4           ; Wait for Railcom start (PIO0 signals IRQ 4)
+    set pins, 1            ; Apply brake (T=26us)
+lp:
+    jmp y--, lp            ; 1 cycle per loop
+    irq prev 5             ; Signal wavegen on PIO0 to wake up
+    nop         [2]        ; Padding (3 cycles) to align with wavegen wrap
+    set pins, 0            ; Release brake
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void cutout_program_init(PIO pio, uint sm, uint offset,
+                                        uint brake_pin) {
+    pio_sm_config c = cutout_program_get_default_config(offset);
+    sm_config_set_set_pins(&c, brake_pin, 1);
+    sm_config_set_in_shift(&c, false, true, 32);
+    sm_config_set_out_shift(&c, false, false, 32);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    sm_config_set_out_special(&c, true, false, 0);
+
+    pio_gpio_init(pio, brake_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, brake_pin, 1, true);
+
+    float div = (float)clock_get_hz(clk_sys) / 500000.0f;
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

@@ -1,0 +1,82 @@
+; simple-dcc DCC Waveform Generator (No RailCom Cutout)
+; SPDX-License-Identifier: MIT
+
+; Same as wavegen.pio but without the RailCom IRQ/wait sequence at end of packet.
+
+.program wavegen_nocutout
+
+.wrap_target
+
+set y, 15                  ; Set the preamble length to 16 (n-1)
+preamble:
+    set pins, 0b11    [28] ; Set pin high for the preamble
+    set pins, 0b00    [27] ; Set pin low for the preamble
+    jmp y--, preamble
+
+    ; Message start bit begins with a high half-wave
+    set pins, 0b11
+
+    ; Generate an idle packet (0x3FF00FF) in case the FIFO is empty
+    mov x, ~NULL           ; Make x all 1s
+    in NULL, 6             ; Byte 1
+    in x, 10               ; Byte 1-2
+    in NULL, 8             ; Byte 3
+    in x, 8                ; Byte 4
+    mov x, isr             ; Put the pattern into x as the default pull value
+
+    ; Pull the next encoded start packet from the FIFO
+    pull noblock           ; Will receive idle packet from x if FIFO is empty
+    out y, 8               ; Store the byte count of the message in y
+    jmp byte_reset         ; Jump to the byte loop reset
+
+byte_loop:
+    mov isr, y             ; Store the bytes remaining in the ISR
+    jmp mid_zero      [15] ; Jump to the middle section of the separator byte
+
+bit_loop:
+    out y, 1               ; Pull an output bit to y
+    jmp y--, short_low     ; Short-circuit the middle for a 1-bit
+mid_zero:
+    ; Add the extra duration for a zero bit to the middle section
+    nop               [28] ; Zero high part 2
+    set pins, 0b00    [28] ; Zero low part 1
+
+short_low:
+    set pins, 0b00    [28] ; Low half-wave
+
+new_bit:
+    set pins, 0b11    [25] ; High half-wave (starting new bit)
+    jmp x--, bit_loop      ; Loop back for the next bit
+    mov y, isr        [2]  ; Restore the bytes remaining counter from the ISR
+
+byte_reset:
+    set x, 8               ; Set x to 8 for the next byte loop
+    jmp y--, byte_loop     ; Loop back for the next byte
+
+    set pins, 0b00    [27] ; Second half of packet end bit
+
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void wavegen_nocutout_program_init(PIO pio, uint sm, uint offset,
+                                                  uint signal_pin, uint pin_count) {
+    pio_sm_config c = wavegen_nocutout_program_get_default_config(offset);
+    sm_config_set_set_pins(&c, signal_pin, pin_count);
+    sm_config_set_in_shift(&c, false, false, 0);
+    sm_config_set_out_shift(&c, false, true, 32);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    sm_config_set_out_special(&c, true, false, 0);
+
+    for (uint i = 0; i < pin_count; i++) {
+        pio_gpio_init(pio, signal_pin + i);
+    }
+    pio_sm_set_consecutive_pindirs(pio, sm, signal_pin, pin_count, true);
+
+    float div = (float)clock_get_hz(clk_sys) / 500000.0f;
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
