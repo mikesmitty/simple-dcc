@@ -15,7 +15,7 @@ endif()
 include(pico_sdk_import.cmake)
 include(FreeRTOS_Kernel_import.cmake)
 
-project(simple_dcc C CXX ASM)
+project(simple-dcc C CXX ASM)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
@@ -71,7 +71,7 @@ target_include_directories(openlcb PUBLIC
 )
 
 # --- Main application ---
-add_executable(simple_dcc
+add_executable(simple-dcc
     src/main.c
     src/openlcb_user_config.c
     src/dcc/packet.c
@@ -88,17 +88,17 @@ add_executable(simple_dcc
 )
 
 # --- PIO programs (must come after add_executable) ---
-pico_generate_pio_header(simple_dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/wavegen.pio)
-pico_generate_pio_header(simple_dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/wavegen_nocutout.pio)
-pico_generate_pio_header(simple_dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/wavegen_servicemode.pio)
-pico_generate_pio_header(simple_dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/cutout.pio)
+pico_generate_pio_header(simple-dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/wavegen.pio)
+pico_generate_pio_header(simple-dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/wavegen_nocutout.pio)
+pico_generate_pio_header(simple-dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/wavegen_servicemode.pio)
+pico_generate_pio_header(simple-dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/cutout.pio)
 
-target_include_directories(simple_dcc PRIVATE
+target_include_directories(simple-dcc PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/src
     ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
-target_link_libraries(simple_dcc PRIVATE
+target_link_libraries(simple-dcc PRIVATE
     pico_stdlib
     hardware_adc
     hardware_pio
@@ -107,15 +107,15 @@ target_link_libraries(simple_dcc PRIVATE
 )
 
 # USB CDC for serial I/O, disable UART stdio, enable RTT for debug
-pico_enable_stdio_usb(simple_dcc 1)
-pico_enable_stdio_uart(simple_dcc 0)
-pico_enable_stdio_rtt(simple_dcc 1)
+pico_enable_stdio_usb(simple-dcc 1)
+pico_enable_stdio_uart(simple-dcc 0)
+pico_enable_stdio_rtt(simple-dcc 1)
 
 # Wait up to 2s during stdio_usb_init() for USB enumeration (bare-metal phase
 # where the SDK's alarm-based tud_task() background IRQ works reliably).
-target_compile_definitions(simple_dcc PRIVATE
+target_compile_definitions(simple-dcc PRIVATE
     PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=2000
 )
 
 # Generate UF2/BIN/HEX outputs
-pico_add_extra_outputs(simple_dcc)
+pico_add_extra_outputs(simple-dcc)

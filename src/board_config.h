@@ -28,7 +28,7 @@
 #define MAX_LOCOS           50
 #define PACKET_POOL_SIZE    64
 
-// ---- LED (onboard, active high on Pico 2) ----
-#define PIN_LED             PICO_DEFAULT_LED_PIN
+// ---- LED (onboard, active high on this board) ----
+#define PIN_LED             23
 
 #endif // BOARD_CONFIG_H

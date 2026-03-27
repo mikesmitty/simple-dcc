@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
+#include "hardware/irq.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "queue.h"
@@ -48,44 +49,49 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *name) {
 }
 
 // Required by configSUPPORT_STATIC_ALLOCATION
-static StaticTask_t idle_task_tcb;
-static StackType_t  idle_task_stack[configMINIMAL_STACK_SIZE];
+// In SMP mode, an idle task is created for Core 0 (Idle Task)
+// and Core 1+ (Passive Idle Tasks).
+static StaticTask_t idle_task_tcb[configNUMBER_OF_CORES];
+static StackType_t  idle_task_stack[configNUMBER_OF_CORES][configMINIMAL_STACK_SIZE * 2];
 
 void vApplicationGetIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffer,
                                    StackType_t **ppxIdleTaskStackBuffer,
                                    configSTACK_DEPTH_TYPE *pulIdleTaskStackSize) {
-    *ppxIdleTaskTCBBuffer = &idle_task_tcb;
-    *ppxIdleTaskStackBuffer = idle_task_stack;
-    *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
+    *ppxIdleTaskTCBBuffer = &idle_task_tcb[0];
+    *ppxIdleTaskStackBuffer = &idle_task_stack[0][0];
+    *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE * 2;
+}
+
+void vApplicationGetPassiveIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffer,
+                                          StackType_t **ppxIdleTaskStackBuffer,
+                                          configSTACK_DEPTH_TYPE *pulIdleTaskStackSize,
+                                          BaseType_t xPassiveIdleTaskIndex) {
+    // xPassiveIdleTaskIndex is 0 for Core 1, 1 for Core 2, etc.
+    // So we use index + 1 for our static arrays.
+    uint32_t idx = (uint32_t)xPassiveIdleTaskIndex + 1;
+    if (idx < configNUMBER_OF_CORES) {
+        *ppxIdleTaskTCBBuffer = &idle_task_tcb[idx];
+        *ppxIdleTaskStackBuffer = &idle_task_stack[idx][0];
+        *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE * 2;
+    }
 }
 
 static StaticTask_t timer_task_tcb;
-static StackType_t  timer_task_stack[configTIMER_TASK_STACK_DEPTH];
+static StackType_t  timer_task_stack[configTIMER_TASK_STACK_DEPTH * 2];
 
 void vApplicationGetTimerTaskMemory(StaticTask_t **ppxTimerTaskTCBBuffer,
                                     StackType_t **ppxTimerTaskStackBuffer,
                                     configSTACK_DEPTH_TYPE *pulTimerTaskStackSize) {
     *ppxTimerTaskTCBBuffer = &timer_task_tcb;
     *ppxTimerTaskStackBuffer = timer_task_stack;
-    *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH;
-}
-
-static void task_blink(void *params) {
-    (void)params;
-    gpio_init(PIN_LED);
-    gpio_set_dir(PIN_LED, GPIO_OUT);
-
-    for (;;) {
-        gpio_put(PIN_LED, 1);
-        vTaskDelay(pdMS_TO_TICKS(500));
-        gpio_put(PIN_LED, 0);
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
+    *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH * 2;
 }
 
 int main(void) {
     stdio_init_all();
-    printf("[INIT] simple-dcc boot\n");
+    // Ensure terminals are ready
+    // sleep_ms(2000);
+    printf("\n[INIT] starting simple-dcc\n");
 
     packet_pool_init();
     printf("[INIT] packet pool ready\n");
@@ -129,7 +135,6 @@ int main(void) {
     xTaskCreate(task_dcc_reminder,   "reminder",  512,  &dcc_engine,      3, NULL);
     xTaskCreate(task_protocol,       "protocol",  1024, NULL,             2, NULL);
     xTaskCreate(task_serial,         "serial",    1024, NULL,             1, NULL);
-    xTaskCreate(task_blink,          "blink",     configMINIMAL_STACK_SIZE, NULL, 1, NULL);
     printf("[INIT] tasks created, starting scheduler\n");
 
     vTaskStartScheduler();

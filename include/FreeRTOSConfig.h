@@ -4,14 +4,17 @@
 // ---- Scheduling ----
 #define configUSE_PREEMPTION                    1
 #define configUSE_TIME_SLICING                  1
-#define configNUMBER_OF_CORES                   1   // Single-core for now; set to 2 for SMP
-#define configRUN_MULTIPLE_PRIORITIES           0
+#define configNUMBER_OF_CORES                   2   // Use both RP2350 cores
+#define configRUN_MULTIPLE_PRIORITIES           1   // Allow cores to run different priority tasks
 #define configTICK_RATE_HZ                      1000
 #define configMAX_PRIORITIES                    7
-#define configMINIMAL_STACK_SIZE                256  // words
+#define configMINIMAL_STACK_SIZE                256 // words
 #define configIDLE_SHOULD_YIELD                 1
+#define configUSE_PASSIVE_IDLE_HOOK             0
+#define configUSE_CORE_AFFINITY                 1
 
 // ---- ARM Cortex-M33 (RP2350) port settings ----
+#define configRUN_FREERTOS_SECURE_ONLY          1   // Non-secure mode is unnecessary added complexity
 #define configENABLE_FPU                        1
 #define configENABLE_MPU                        0
 #define configENABLE_TRUSTZONE                  0
@@ -40,7 +43,7 @@
 #define configUSE_COUNTING_SEMAPHORES           0
 #define configUSE_QUEUE_SETS                    0
 #define configUSE_TASK_NOTIFICATIONS            1
-#define configUSE_TIMERS                        1
+#define configUSE_TIMERS                        1   // Required by RP2350 port doorbells
 #define configTIMER_TASK_PRIORITY               (configMAX_PRIORITIES - 1)
 #define configTIMER_QUEUE_LENGTH                10
 #define configTIMER_TASK_STACK_DEPTH            512
@@ -70,5 +73,9 @@
 #define INCLUDE_xTaskGetCurrentTaskHandle       1
 #define INCLUDE_xSemaphoreGetMutexHolder        1
 #define INCLUDE_xTimerPendFunctionCall          1
+
+#define vPortSVCHandler     isr_svcall
+#define xPortPendSVHandler  isr_pendsv
+#define xPortSysTickHandler isr_systick
 
 #endif // FREERTOS_CONFIG_H

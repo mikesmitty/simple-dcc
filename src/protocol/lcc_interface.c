@@ -13,6 +13,7 @@
 #include "timers.h"
 
 #include "pico/unique_id.h"
+#include <string.h>
 
 static SemaphoreHandle_t lcc_mutex;
 dcc_engine_t *g_dcc_engine;
@@ -49,8 +50,9 @@ static void can_unlock(void) {
 
 static uint16_t config_mem_read(openlcb_node_t *node, uint32_t address,
                                 uint16_t count, configuration_memory_buffer_t *buffer) {
-    (void)node; (void)address; (void)count; (void)buffer;
-    return 0; // TODO: implement flash-backed config memory
+    (void)node; (void)address;
+    memset(buffer, 0, count);
+    return count;
 }
 
 static uint16_t config_mem_write(openlcb_node_t *node, uint32_t address,
@@ -74,14 +76,13 @@ static node_id_t get_unique_node_id(void) {
     pico_unique_board_id_t board_id;
     pico_get_unique_board_id(&board_id);
 
-    // Use last 6 bytes of the 8-byte board ID as the 48-bit node ID
-    // Set the top two bytes to a private range prefix (0x0601)
+    // Use last 4 bytes of the 8-byte board ID as the unique part
+    // Set the top two bytes to the private range prefix (0x0601)
     node_id_t id = 0x060100000000ULL;
-    id |= ((uint64_t)board_id.id[2] << 32);
-    id |= ((uint64_t)board_id.id[3] << 24);
-    id |= ((uint64_t)board_id.id[4] << 16);
-    id |= ((uint64_t)board_id.id[5] << 8);
-    id |= ((uint64_t)board_id.id[6]);
+    id |= ((uint64_t)board_id.id[4] << 24);
+    id |= ((uint64_t)board_id.id[5] << 16);
+    id |= ((uint64_t)board_id.id[6] << 8);
+    id |= ((uint64_t)board_id.id[7]);
     return id;
 }
 
