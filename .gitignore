@@ -1,6 +1,6 @@
 build/
 cmake-build-*/
-.vscode/
+!.vscode/*
 .idea/
 *.uf2
 *.elf
