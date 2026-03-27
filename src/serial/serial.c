@@ -28,7 +28,12 @@ void task_serial(void *params) {
     gridconnect_buffer_t gc_buf;
 
     for (;;) {
-        int ch = getchar_timeout_us(100000); // 100ms timeout
+        // Service USB stack — stdio_flush() calls tud_task() via the
+        // mutex-protected stdio_usb_out_flush path.  Needed because
+        // stdio_usb_in_chars skips tud_task() when USB is not yet
+        // connected, so the background IRQ is the only other caller.
+        stdio_flush();
+        int ch = getchar_timeout_us(1000); // 1ms timeout for responsive USB
         if (ch == PICO_ERROR_TIMEOUT || ch < 0) {
             continue;
         }

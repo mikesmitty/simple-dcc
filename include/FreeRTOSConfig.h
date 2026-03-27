@@ -24,6 +24,10 @@
 #define configMAX_SYSCALL_INTERRUPT_PRIORITY    (configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY << (8 - configPRIO_BITS))
 #define configKERNEL_INTERRUPT_PRIORITY         (15 << (8 - configPRIO_BITS))
 
+// ---- Pico SDK interop ----
+#define configSUPPORT_PICO_SYNC_INTEROP     1
+#define configSUPPORT_PICO_TIME_INTEROP     1
+
 // ---- Memory ----
 #define configTOTAL_HEAP_SIZE                   (32 * 1024)
 #define configSUPPORT_STATIC_ALLOCATION         1

@@ -111,5 +111,11 @@ pico_enable_stdio_usb(simple_dcc 1)
 pico_enable_stdio_uart(simple_dcc 0)
 pico_enable_stdio_rtt(simple_dcc 1)
 
+# Wait up to 2s during stdio_usb_init() for USB enumeration (bare-metal phase
+# where the SDK's alarm-based tud_task() background IRQ works reliably).
+target_compile_definitions(simple_dcc PRIVATE
+    PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=2000
+)
+
 # Generate UF2/BIN/HEX outputs
 pico_add_extra_outputs(simple_dcc)
