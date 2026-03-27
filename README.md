@@ -1,10 +1,15 @@
 # simple-dcc
 
-C/FreeRTOS DCC command station for RP2350 (Pico 2) with LCC/OpenLCB over USB.
+A simple LCC-connected DCC command station, because sometimes a tool just needs to do the one thing.
 
-## Hardware
+## Features
 
-- **MCU:** RP2350 (Raspberry Pi Pico 2)
+- DCC signal generation
+- RailCom cutout support
+
+## Current Reference Hardware
+
+- **Board:** Adafruit Metro RP2350 (Raspberry Pi Pico 2)
 - **Motor Shield:** EX-MotorShield8874
 - **Protocol:** LCC/OpenLCB via GridConnect CAN frames over USB CDC
 
