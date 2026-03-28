@@ -1,6 +1,7 @@
 #include "protocol/lcc_interface.h"
 #include "protocol/lcc_traction.h"
 #include "serial/serial.h"
+#include "util/nv_storage.h"
 
 #include "openlcb/openlcb_config.h"
 #include "openlcb/openlcb_gridconnect.h"
@@ -24,20 +25,34 @@ static SemaphoreHandle_t lcc_mutex;
 dcc_engine_t *g_dcc_engine;
 static track_t *g_track_main;
 static openlcb_node_t *g_cs_node;
+static bool    cs_config_dirty = false;
+static TimerHandle_t flash_flush_timer;
 
 // Train node ID range: 0x060100000000 | dcc_address
 #define TRAIN_NODE_ID_BASE 0x060100000000ULL
 
-// --- Configuration memory (RAM-backed, space 0xFD) ---
+// --- Configuration memory (RAM-backed with Flash persistence, space 0xFD) ---
 
 #define CONFIG_OFFSET_AUTO_CLAIM  127   // after ACDI user fields (63 + 64)
 #define CONFIG_MEM_SIZE           0x0200
 
-static uint8_t cs_config_mem[CONFIG_MEM_SIZE];
+static uint8_t cs_config_mem[CONFIG_MEM_SIZE] __attribute__((aligned(256)));
 
 static void config_mem_init_defaults(void) {
     memset(cs_config_mem, 0, CONFIG_MEM_SIZE);
     cs_config_mem[CONFIG_OFFSET_AUTO_CLAIM] = 1;  // default: enabled
+}
+
+static void flash_flush_timer_callback(TimerHandle_t timer) {
+    (void)timer;
+    if (cs_config_dirty) {
+        DBG("[NV] flushing config to flash\n");
+        if (nv_storage_write(cs_config_mem, CONFIG_MEM_SIZE)) {
+            cs_config_dirty = false;
+        } else {
+            DBG("[NV] ERROR: flash flush failed\n");
+        }
+    }
 }
 
 // Pending train node creation (set by serial task, consumed by protocol task)
@@ -91,8 +106,27 @@ static uint16_t config_mem_write(openlcb_node_t *node, uint32_t address,
         return 0;
     if (address + count > CONFIG_MEM_SIZE)
         count = (uint16_t)(CONFIG_MEM_SIZE - address);
-    memcpy(&cs_config_mem[address], buffer, count);
+    
+    DBG("[NV] config_mem_write addr=%u count=%u val=0x%02X\n", address, count, ((uint8_t*)buffer)[0]);
+
+    // Only mark dirty if something actually changed
+    if (memcmp(&cs_config_mem[address], buffer, count) != 0) {
+        memcpy(&cs_config_mem[address], buffer, count);
+        cs_config_dirty = true;
+        xTimerReset(flash_flush_timer, 0);
+    }
     return count;
+}
+
+static void factory_reset(openlcb_statemachine_info_t *statemachine_info,
+                          config_mem_operations_request_info_t *request_info) {
+    (void)statemachine_info;
+    (void)request_info;
+    DBG("[NV] factory reset: clearing config\n");
+    config_mem_init_defaults();
+    if (nv_storage_write(cs_config_mem, CONFIG_MEM_SIZE)) {
+        cs_config_dirty = false;
+    }
 }
 
 // --- Timer callback ---
@@ -195,8 +229,18 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
 
     g_dcc_engine = dcc;
     g_track_main = track;
-    config_mem_init_defaults();
+
+    // Load config from flash, or init to defaults if flash is empty
+    if (!nv_storage_init(cs_config_mem, CONFIG_MEM_SIZE)) {
+        DBG("[NV] no config in flash, using defaults\n");
+        config_mem_init_defaults();
+    } else {
+        DBG("[NV] config loaded from flash\n");
+    }
+
     lcc_mutex = xSemaphoreCreateMutex();
+    flash_flush_timer = xTimerCreate("flash_flush", pdMS_TO_TICKS(2000),
+                                     pdFALSE, NULL, flash_flush_timer_callback);
 
     // Initialize CAN transport (must be before OpenLcb_initialize)
     static const can_config_t can_cfg = {
@@ -217,7 +261,7 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
         .config_mem_read         = config_mem_read,
         .config_mem_write        = config_mem_write,
         .reboot                  = NULL,
-        .factory_reset           = NULL,
+        .factory_reset           = factory_reset,
 
         .on_login_complete            = lcc_on_login_complete,
         .on_pc_event_report           = on_pc_event_report,
@@ -226,6 +270,7 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
         .on_train_function_changed    = lcc_traction_on_function_changed,
         .on_train_emergency_entered   = lcc_traction_on_emergency_entered,
         .on_train_emergency_exited    = lcc_traction_on_emergency_exited,
+        .on_train_controller_released = lcc_traction_on_controller_released,
         .on_train_search_no_match     = lcc_traction_on_search_no_match,
     };
     OpenLcb_initialize(&olcb_cfg);
@@ -279,8 +324,14 @@ static void process_pending_train_node(void) {
     pending_train_addr = 0;
 
     node_id_t train_id = TRAIN_NODE_ID_BASE | (uint64_t)addr;
-    if (OpenLcbNode_find_by_node_id(train_id)) {
-        DBG("[DBG] train node addr=%u already exists\n", addr);
+    openlcb_node_t *existing_node = OpenLcbNode_find_by_node_id(train_id);
+    if (existing_node) {
+        if (!existing_node->state.initialized && lcc_interface_auto_claim_enabled()) {
+            DBG("[DBG] reviving offline train node addr=%u\n", addr);
+            existing_node->state.run_state = RUNSTATE_INIT;
+        } else {
+            DBG("[DBG] train node addr=%u already exists\n", addr);
+        }
         return;
     }
 

@@ -4,8 +4,10 @@
 #include "openlcb/openlcb_float16.h"
 #include "openlcb/openlcb_config.h"
 #include "openlcb/openlcb_application_train.h"
+#include "openlcb/openlcb_node.h"
+#include "openlcb/openlcb_defines.h"
 
-#include <math.h>
+#include "util/dbg.h"
 #include "util/dbg.h"
 
 // Set by lcc_interface_init
@@ -73,6 +75,19 @@ void lcc_traction_on_emergency_exited(openlcb_node_t *node, train_emergency_type
     // Point-to-point estop clear: next speed command resumes the loco.
 }
 
+void lcc_traction_on_controller_released(openlcb_node_t *node) {
+    if (node && node->train_state) {
+        bool auto_claim = lcc_interface_auto_claim_enabled();
+        DBG("[DBG] train controller released addr=%u (auto_claim=%d)\n", node->train_state->dcc_address, auto_claim);
+        if (!auto_claim) {
+            DBG("[DBG] auto-claim is disabled, taking node offline\n");
+            node->state.initialized = false;
+            node->state.run_state = RUNSTATE_INIT;
+            node->state.permitted = false;
+        }
+    }
+}
+
 openlcb_node_t *lcc_traction_on_search_no_match(uint16_t search_address, uint8_t flags) {
     (void)flags;
 
@@ -81,14 +96,24 @@ openlcb_node_t *lcc_traction_on_search_no_match(uint16_t search_address, uint8_t
     if (!lcc_interface_auto_claim_enabled())
         return NULL;
 
+    // Create a node ID by embedding the DCC address
+    // Using a private range: 0x060100000000 + address
+    node_id_t train_node_id = 0x060100000000ULL | (uint64_t)search_address;
+
+    // Check if we already have this node (maybe it was released and disabled)
+    openlcb_node_t *existing_node = OpenLcbNode_find_by_node_id(train_node_id);
+    if (existing_node) {
+        if (!existing_node->state.initialized) {
+            DBG("[DBG] reviving offline train node addr=%u\n", search_address);
+            existing_node->state.run_state = RUNSTATE_INIT;
+        }
+        return existing_node;
+    }
+
     // Create a new train node for this address
     // Node ID: base + address offset (use a well-known range)
     // The library will handle alias negotiation
     extern const node_parameters_t OpenLcbUserConfig_train_node_parameters;
-
-    // Create a node ID by embedding the DCC address
-    // Using a private range: 0x060100000000 + address
-    node_id_t train_node_id = 0x060100000000ULL | (uint64_t)search_address;
 
     openlcb_node_t *node = OpenLcb_create_node(train_node_id, &OpenLcbUserConfig_train_node_parameters);
     if (!node) {
