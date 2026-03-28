@@ -70,11 +70,17 @@ target_include_directories(openlcb PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}/src  # for openlcb_user_config.h, can_user_config.h
 )
 
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cdi_data.c ${CMAKE_CURRENT_BINARY_DIR}/cdi_data.h
+    COMMAND python3 ${CMAKE_CURRENT_LIST_DIR}/lib/OpenLcbCLib/tools/xml_to_array/XmlToArray.py --header -t cdi -o ${CMAKE_CURRENT_BINARY_DIR}/cdi_data ${CMAKE_CURRENT_LIST_DIR}/src/cdi.xml
+    DEPENDS ${CMAKE_CURRENT_LIST_DIR}/src/cdi.xml
+    COMMENT "Generating cdi_data.c and cdi_data.h from cdi.xml"
+)
+
 # --- Main application ---
 add_executable(simple-dcc
     src/main.c
     src/openlcb_user_config.c
-    src/cdi_data.c
     src/dcc/packet.c
     src/dcc/dcc.c
     src/dcc/functions.c
@@ -96,6 +102,7 @@ pico_generate_pio_header(simple-dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/wavege
 pico_generate_pio_header(simple-dcc ${CMAKE_CURRENT_LIST_DIR}/src/wavegen/cutout.pio)
 
 target_include_directories(simple-dcc PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/src
     ${CMAKE_CURRENT_LIST_DIR}/include
 )

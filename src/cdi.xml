@@ -4,7 +4,9 @@
 <manufacturer>simple-dcc</manufacturer>
 <model>DCC Command Station</model>
 <hardwareVersion>1.0.0</hardwareVersion>
-<softwareVersion>0.1.0</softwareVersion>
+<!-- x-release-please-start-version -->
+<softwareVersion>0.2.2</softwareVersion>
+<!-- x-release-please-end -->
 </identification>
 <acdi/>
 <segment origin="0" space="253">

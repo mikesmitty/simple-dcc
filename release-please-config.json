@@ -3,6 +3,10 @@
     ".": {
       "release-type": "simple",
       "bump-minor-pre-major": true,
+      "extra-files": [
+        "src/openlcb_user_config.c",
+        "src/cdi.xml"
+      ],
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
         { "type": "fix", "section": "Bug Fixes" },

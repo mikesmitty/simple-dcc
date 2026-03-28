@@ -1,7 +1,7 @@
 #include "openlcb_user_config.h"
 #include "openlcb/openlcb_types.h"
 #include "openlcb/openlcb_defines.h"
-#include "cdi_data.h"
+#include "cdi_data.c"
 
 const node_parameters_t OpenLcbUserConfig_node_parameters = {
 
@@ -9,7 +9,9 @@ const node_parameters_t OpenLcbUserConfig_node_parameters = {
     .snip.name = "simple-dcc",
     .snip.model = "DCC Command Station",
     .snip.hardware_version = "1.0.0",
-    .snip.software_version = "0.1.0",
+    // x-release-please-start-version
+    .snip.software_version = "0.2.2",
+    // x-release-please-end
     .snip.user_version = 2,
 
     .protocol_support = (PSI_DATAGRAM |
@@ -38,7 +40,7 @@ const node_parameters_t OpenLcbUserConfig_node_parameters = {
     .address_space_configuration_definition.present = true,
     .address_space_configuration_definition.low_address_valid = false,
     .address_space_configuration_definition.low_address = 0,
-    .address_space_configuration_definition.highest_address = CDI_DATA_SIZE - 2,
+    .address_space_configuration_definition.highest_address = sizeof(_cdi_data) - 2,
     .address_space_configuration_definition.address_space = CONFIG_MEM_SPACE_CONFIGURATION_DEFINITION_INFO,
     .address_space_configuration_definition.description = "",
 
@@ -109,7 +111,9 @@ const node_parameters_t OpenLcbUserConfig_train_node_parameters = {
     .snip.name = "simple-dcc",
     .snip.model = "DCC Train Node",
     .snip.hardware_version = "1.0.0",
-    .snip.software_version = "0.1.0",
+    // x-release-please-start-version
+    .snip.software_version = "0.2.2",
+    // x-release-please-end
     .snip.user_version = 2,
 
     .protocol_support = (PSI_DATAGRAM |
