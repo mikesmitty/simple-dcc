@@ -12,7 +12,7 @@ cmake ..
 make
 ```
 
-Output: `build/simple_dcc.uf2` — drag to RP2350 in BOOTSEL mode.
+Output: `build/simple-dcc.uf2` — drag to RP2350 in BOOTSEL mode.
 
 ## Host-side Tests
 

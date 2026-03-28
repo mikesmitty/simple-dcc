@@ -50,5 +50,5 @@ jobs:
           TAG_NAME: ${{ needs.release-please.outputs.tag-name }}
           VERSION: ${{ needs.release-please.outputs.version }}
         run: |
-          cp build/simple_dcc.uf2 "simple-dcc-${VERSION}.uf2"
+          cp build/simple-dcc.uf2 "simple-dcc-${VERSION}.uf2"
           gh release upload "$TAG_NAME" "simple-dcc-${VERSION}.uf2"

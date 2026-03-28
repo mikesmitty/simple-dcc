@@ -64,17 +64,17 @@ cmake ..
 make -j$(nproc)
 ```
 
-Output: `build/simple_dcc.uf2`
+Output: `build/simple-dcc.uf2`
 
 ## Flash
 
 1. Hold BOOTSEL on the Pico 2 and connect USB
-2. Drag `simple_dcc.uf2` to the mounted `RPI-RP2` drive
+2. Drag `simple-dcc.uf2` to the mounted `RPI-RP2` drive
 
 Or use picotool:
 
 ```bash
-picotool load build/simple_dcc.uf2
+picotool load build/simple-dcc.uf2
 picotool reboot
 ```
 

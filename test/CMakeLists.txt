@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.13)
 
-project(simple_dcc_tests C)
+project(simple-dcc-tests C)
 
 set(CMAKE_C_STANDARD 11)
 
