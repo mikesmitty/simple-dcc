@@ -1,4 +1,5 @@
 #include "protocol/lcc_traction.h"
+#include "protocol/lcc_interface.h"
 #include "dcc/dcc.h"
 #include "openlcb/openlcb_float16.h"
 #include "openlcb/openlcb_config.h"
@@ -76,6 +77,9 @@ openlcb_node_t *lcc_traction_on_search_no_match(uint16_t search_address, uint8_t
     (void)flags;
 
     DBG("[DBG] search_no_match addr=%u flags=0x%02x\n", search_address, flags);
+
+    if (!lcc_interface_auto_claim_enabled())
+        return NULL;
 
     // Create a new train node for this address
     // Node ID: base + address offset (use a well-known range)

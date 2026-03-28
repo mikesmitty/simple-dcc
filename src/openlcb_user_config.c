@@ -1,6 +1,7 @@
 #include "openlcb_user_config.h"
 #include "openlcb/openlcb_types.h"
 #include "openlcb/openlcb_defines.h"
+#include "cdi_data.h"
 
 const node_parameters_t OpenLcbUserConfig_node_parameters = {
 
@@ -37,7 +38,7 @@ const node_parameters_t OpenLcbUserConfig_node_parameters = {
     .address_space_configuration_definition.present = true,
     .address_space_configuration_definition.low_address_valid = false,
     .address_space_configuration_definition.low_address = 0,
-    .address_space_configuration_definition.highest_address = 0,
+    .address_space_configuration_definition.highest_address = CDI_DATA_SIZE - 2,
     .address_space_configuration_definition.address_space = CONFIG_MEM_SPACE_CONFIGURATION_DEFINITION_INFO,
     .address_space_configuration_definition.description = "",
 
@@ -97,7 +98,7 @@ const node_parameters_t OpenLcbUserConfig_node_parameters = {
     .address_space_firmware.address_space = CONFIG_MEM_SPACE_FIRMWARE,
     .address_space_firmware.description = "",
 
-    .cdi = NULL,
+    .cdi = _cdi_data,
     .fdi = NULL,
 };
 

@@ -2,6 +2,7 @@
 #define LCC_INTERFACE_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "dcc/dcc.h"
 #include "track/track.h"
 #include "FreeRTOS.h"
@@ -17,5 +18,8 @@ void lcc_interface_on_rx_can_msg(struct can_msg_struct *msg);
 
 // FreeRTOS task: runs OpenLcb_run() in a loop
 void task_protocol(void *params);
+
+// Returns true if auto-claim of DCC addresses is enabled in config memory.
+bool lcc_interface_auto_claim_enabled(void);
 
 #endif // LCC_INTERFACE_H

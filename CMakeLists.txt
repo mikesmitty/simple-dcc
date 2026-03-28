@@ -74,6 +74,7 @@ target_include_directories(openlcb PUBLIC
 add_executable(simple-dcc
     src/main.c
     src/openlcb_user_config.c
+    src/cdi_data.c
     src/dcc/packet.c
     src/dcc/dcc.c
     src/dcc/functions.c

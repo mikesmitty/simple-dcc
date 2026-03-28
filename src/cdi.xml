@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<cdi xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://openlcb.org/schema/cdi/1/4/cdi.xsd">
+<identification>
+<manufacturer>simple-dcc</manufacturer>
+<model>DCC Command Station</model>
+<hardwareVersion>1.0.0</hardwareVersion>
+<softwareVersion>0.1.0</softwareVersion>
+</identification>
+<acdi/>
+<segment origin="0" space="253">
+<name>User Identification</name>
+<string size="63"><name>User Name</name></string>
+<string size="64"><name>User Description</name></string>
+</segment>
+<segment origin="127" space="253">
+<name>DCC Command Station</name>
+<group>
+<name>Traction</name>
+<int size="1">
+<name>Auto-claim DCC Addresses</name>
+<description>When enabled, automatically creates a traction node for any requested DCC address.</description>
+<map>
+<relation><property>0</property><value>Disabled</value></relation>
+<relation><property>1</property><value>Enabled</value></relation>
+</map>
+</int>
+</group>
+</segment>
+</cdi>

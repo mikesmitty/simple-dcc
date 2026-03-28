@@ -28,6 +28,18 @@ static openlcb_node_t *g_cs_node;
 // Train node ID range: 0x060100000000 | dcc_address
 #define TRAIN_NODE_ID_BASE 0x060100000000ULL
 
+// --- Configuration memory (RAM-backed, space 0xFD) ---
+
+#define CONFIG_OFFSET_AUTO_CLAIM  127   // after ACDI user fields (63 + 64)
+#define CONFIG_MEM_SIZE           0x0200
+
+static uint8_t cs_config_mem[CONFIG_MEM_SIZE];
+
+static void config_mem_init_defaults(void) {
+    memset(cs_config_mem, 0, CONFIG_MEM_SIZE);
+    cs_config_mem[CONFIG_OFFSET_AUTO_CLAIM] = 1;  // default: enabled
+}
+
 // Pending train node creation (set by serial task, consumed by protocol task)
 static volatile uint16_t pending_train_addr;
 
@@ -63,15 +75,24 @@ static void can_unlock(void) {
 
 static uint16_t config_mem_read(openlcb_node_t *node, uint32_t address,
                                 uint16_t count, configuration_memory_buffer_t *buffer) {
-    (void)node; (void)address;
-    memset(buffer, 0, count);
+    (void)node;
+    if (address >= CONFIG_MEM_SIZE)
+        return 0;
+    if (address + count > CONFIG_MEM_SIZE)
+        count = (uint16_t)(CONFIG_MEM_SIZE - address);
+    memcpy(buffer, &cs_config_mem[address], count);
     return count;
 }
 
 static uint16_t config_mem_write(openlcb_node_t *node, uint32_t address,
                                  uint16_t count, configuration_memory_buffer_t *buffer) {
-    (void)node; (void)address; (void)count; (void)buffer;
-    return 0; // TODO: implement flash-backed config memory
+    (void)node;
+    if (address >= CONFIG_MEM_SIZE)
+        return 0;
+    if (address + count > CONFIG_MEM_SIZE)
+        count = (uint16_t)(CONFIG_MEM_SIZE - address);
+    memcpy(&cs_config_mem[address], buffer, count);
+    return count;
 }
 
 // --- Timer callback ---
@@ -165,11 +186,16 @@ static node_id_t get_unique_node_id(void) {
     return id;
 }
 
+bool lcc_interface_auto_claim_enabled(void) {
+    return cs_config_mem[CONFIG_OFFSET_AUTO_CLAIM] != 0;
+}
+
 void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_input) {
     (void)pqueue_input;
 
     g_dcc_engine = dcc;
     g_track_main = track;
+    config_mem_init_defaults();
     lcc_mutex = xSemaphoreCreateMutex();
 
     // Initialize CAN transport (must be before OpenLcb_initialize)
@@ -230,6 +256,9 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
 void lcc_interface_on_rx_can_msg(can_msg_t *msg) {
     uint16_t mti = CanUtilities_convert_can_mti_to_openlcb_mti(msg);
     if (mti != MTI_VERIFY_NODE_ID_GLOBAL || msg->payload_count < 6)
+        return;
+
+    if (!lcc_interface_auto_claim_enabled())
         return;
 
     node_id_t node_id = CanUtilities_extract_can_payload_as_node_id(msg);
