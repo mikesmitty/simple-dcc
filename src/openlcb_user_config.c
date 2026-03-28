@@ -10,7 +10,7 @@ const node_parameters_t OpenLcbUserConfig_node_parameters = {
     .snip.model = "DCC Command Station",
     .snip.hardware_version = "1.0.0",
     // x-release-please-start-version
-    .snip.software_version = "0.2.2",
+    .snip.software_version = "0.2.3",
     // x-release-please-end
     .snip.user_version = 2,
 
@@ -112,7 +112,7 @@ const node_parameters_t OpenLcbUserConfig_train_node_parameters = {
     .snip.model = "DCC Train Node",
     .snip.hardware_version = "1.0.0",
     // x-release-please-start-version
-    .snip.software_version = "0.2.2",
+    .snip.software_version = "0.2.3",
     // x-release-please-end
     .snip.user_version = 2,
 

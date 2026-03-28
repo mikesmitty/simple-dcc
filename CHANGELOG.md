@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/mikesmitty/simple-dcc/compare/v0.2.2...v0.2.3) (2026-03-28)
+
+
+### Bug Fixes
+
+* automate firmware version updates and asset uploads ([2f506e7](https://github.com/mikesmitty/simple-dcc/commit/2f506e776c8160b4d57b41faa65914a119ccd8d3))
+
 ## [0.2.2](https://github.com/mikesmitty/simple-dcc/compare/v0.2.1...v0.2.2) (2026-03-28)
 
 

@@ -5,7 +5,7 @@
 <model>DCC Command Station</model>
 <hardwareVersion>1.0.0</hardwareVersion>
 <!-- x-release-please-start-version -->
-<softwareVersion>0.2.2</softwareVersion>
+<softwareVersion>0.2.3</softwareVersion>
 <!-- x-release-please-end -->
 </identification>
 <acdi/>
