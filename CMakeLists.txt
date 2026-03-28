@@ -78,6 +78,8 @@ add_custom_command(
 )
 
 # --- Main application ---
+set_source_files_properties(src/openlcb_user_config.c PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/cdi_data.c)
+
 add_executable(simple-dcc
     src/main.c
     src/openlcb_user_config.c
