@@ -89,16 +89,16 @@ void lcc_traction_on_controller_released(openlcb_node_t *node) {
 }
 
 openlcb_node_t *lcc_traction_on_search_no_match(uint16_t search_address, uint8_t flags) {
-    (void)flags;
-
     DBG("[DBG] search_no_match addr=%u flags=0x%02x\n", search_address, flags);
 
-    if (!lcc_interface_auto_claim_enabled())
+    // If "allocate" bit is not set, we shouldn't auto-create unless auto-claim is enabled.
+    // If auto-claim is enabled, we keep existing behavior of auto-creation.
+    if (!(flags & TRAIN_SEARCH_FLAG_ALLOCATE) && !lcc_interface_auto_claim_enabled()) {
         return NULL;
+    }
 
-    // Create a node ID by embedding the DCC address
-    // Using a private range: 0x060100000000 + address
-    node_id_t train_node_id = 0x060100000000ULL | (uint64_t)search_address;
+    // Create a node ID by embedding the DCC address using the dynamic base
+    node_id_t train_node_id = lcc_interface_get_train_node_id_base() | (uint64_t)search_address;
 
     // Check if we already have this node (maybe it was released and disabled)
     openlcb_node_t *existing_node = OpenLcbNode_find_by_node_id(train_node_id);
@@ -111,8 +111,6 @@ openlcb_node_t *lcc_traction_on_search_no_match(uint16_t search_address, uint8_t
     }
 
     // Create a new train node for this address
-    // Node ID: base + address offset (use a well-known range)
-    // The library will handle alias negotiation
     extern const node_parameters_t OpenLcbUserConfig_train_node_parameters;
 
     openlcb_node_t *node = OpenLcb_create_node(train_node_id, &OpenLcbUserConfig_train_node_parameters);
@@ -126,11 +124,12 @@ openlcb_node_t *lcc_traction_on_search_no_match(uint16_t search_address, uint8_t
 
     // Set up train state with the DCC address
     if (node->train_state) {
+        bool long_addr = (flags & TRAIN_SEARCH_FLAG_LONG_ADDR) || (search_address >= TRAIN_MAX_DCC_SHORT_ADDRESS);
         node->train_state->dcc_address = search_address;
-        node->train_state->is_long_address = (search_address > 127);
+        node->train_state->is_long_address = long_addr;
         node->train_state->speed_steps = 3; // 128-step mode
-        DBG("[DBG] train node created addr=%u node_id=%012llx\n",
-               search_address, (unsigned long long)train_node_id);
+        DBG("[DBG] train node created addr=%u (%s) node_id=%012llx\n",
+               search_address, long_addr ? "long" : "short", (unsigned long long)train_node_id);
     } else {
         DBG("[DBG] search_no_match: train_state is NULL!\n");
     }

@@ -8,8 +8,13 @@
 #include "FreeRTOS.h"
 #include "queue.h"
 
+#include "openlcb/openlcb_types.h"
+
 void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_input);
 void lcc_100ms_tick(void);
+
+// Returns the dynamic base used for auto-created train node IDs.
+node_id_t lcc_interface_get_train_node_id_base(void);
 
 // Check incoming CAN frame for Verify Node ID targeting a train address;
 // if matched, queues auto-creation of the train node.

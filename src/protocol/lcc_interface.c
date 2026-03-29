@@ -28,8 +28,8 @@ static openlcb_node_t *g_cs_node;
 static bool    cs_config_dirty = false;
 static TimerHandle_t flash_flush_timer;
 
-// Train node ID range: 0x060100000000 | dcc_address
-#define TRAIN_NODE_ID_BASE 0x060100000000ULL
+// Train node ID base derived from hardware (0x0601HHHH0000)
+static node_id_t g_train_node_id_base;
 
 // --- Configuration memory (RAM-backed with Flash persistence, space 0xFD) ---
 
@@ -224,6 +224,10 @@ bool lcc_interface_auto_claim_enabled(void) {
     return cs_config_mem[CONFIG_OFFSET_AUTO_CLAIM] != 0;
 }
 
+node_id_t lcc_interface_get_train_node_id_base(void) {
+    return g_train_node_id_base;
+}
+
 void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_input) {
     (void)pqueue_input;
 
@@ -280,6 +284,11 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
     node_id_t cs_id = get_unique_node_id();
     g_cs_node = OpenLcb_create_node(cs_id, &OpenLcbUserConfig_node_parameters);
 
+    // Derived train node base: use board unique bytes for middle 16 bits.
+    // This ensures that different command stations use different ID ranges.
+    // 0x0601 (prefix) + BBBB (board-specific) + 0000 (address space)
+    g_train_node_id_base = 0x060100000000ULL | (cs_id & 0x0000FFFF0000ULL);
+
     // Register CS as consumer of well-known emergency events
     OpenLcbApplication_register_consumer_eventid(g_cs_node, EVENT_ID_EMERGENCY_OFF, EVENT_STATUS_SET);
     OpenLcbApplication_register_consumer_eventid(g_cs_node, EVENT_ID_CLEAR_EMERGENCY_OFF, EVENT_STATUS_CLEAR);
@@ -307,7 +316,7 @@ void lcc_interface_on_rx_can_msg(can_msg_t *msg) {
         return;
 
     node_id_t node_id = CanUtilities_extract_can_payload_as_node_id(msg);
-    if ((node_id & 0xFFFFFF000000ULL) != TRAIN_NODE_ID_BASE)
+    if ((node_id & 0xFFFFFFFFFF0000ULL) != g_train_node_id_base)
         return;
 
     uint16_t addr = (uint16_t)(node_id & 0xFFFF);
@@ -323,7 +332,7 @@ static void process_pending_train_node(void) {
     if (addr == 0) return;
     pending_train_addr = 0;
 
-    node_id_t train_id = TRAIN_NODE_ID_BASE | (uint64_t)addr;
+    node_id_t train_id = g_train_node_id_base | (uint64_t)addr;
     openlcb_node_t *existing_node = OpenLcbNode_find_by_node_id(train_id);
     if (existing_node) {
         if (!existing_node->state.initialized && lcc_interface_auto_claim_enabled()) {
