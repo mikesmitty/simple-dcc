@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/mikesmitty/simple-dcc/compare/v0.2.4...v0.3.0) (2026-03-29)
+
+
+### Features
+
+* **protocol:** implement unique Proxy Node IDs and command enforcement ([1d8e986](https://github.com/mikesmitty/simple-dcc/commit/1d8e986596b7b79fb74ac2c37810f61e6c8f1028))
+
+
+### Miscellaneous
+
+* **submodule:** point OpenLcbCLib to mikesmitty fork with authorization fix ([884841f](https://github.com/mikesmitty/simple-dcc/commit/884841f75885a7eed89d232409e578f909998674))
+
+
+### Tests
+
+* **protocol:** add host-side unit tests for LCC traction and interface ([7047ec2](https://github.com/mikesmitty/simple-dcc/commit/7047ec243cf1e3bc86415881008cd4e4879026aa))
+
 ## [0.2.4](https://github.com/mikesmitty/simple-dcc/compare/v0.2.3...v0.2.4) (2026-03-28)
 
 
