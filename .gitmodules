@@ -1,6 +1,6 @@
 [submodule "lib/OpenLcbCLib"]
 	path = lib/OpenLcbCLib
-	url = https://github.com/JimKueneman/OpenLcbCLib.git
+	url = https://github.com/mikesmitty/OpenLcbCLib.git
 [submodule "lib/pico-sdk"]
 	path = lib/pico-sdk
 	url = https://github.com/raspberrypi/pico-sdk.git
