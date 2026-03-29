@@ -24,17 +24,23 @@ static uint32_t ms_since(uint32_t tick) {
     return (ticks_now() - tick) * portTICK_PERIOD_MS;
 }
 
+static uint16_t ma_to_adc_units(uint16_t ma) {
+    // Current (mA) = ADC_reading * (3300.0 / 4096.0) / SENSE_FACTOR_8874
+    // ADC_reading = Current (mA) * SENSE_FACTOR_8874 * 4096.0 / 3300.0
+    return (uint16_t)((float)ma * SENSE_FACTOR_8874 * 4096.0f / 3300.0f);
+}
+
 void motor_init(motor_t *m, char track_id,
                 uint32_t power_pin, uint32_t signal_pin, uint32_t brake_pin,
                 uint32_t fault_pin, uint32_t adc_channel,
-                uint16_t current_limit) {
+                uint16_t current_limit_ma) {
     m->track_id = track_id;
     m->power_pin = power_pin;
     m->signal_pin = signal_pin;
     m->brake_pin = brake_pin;
     m->fault_pin = fault_pin;
     m->adc_channel = adc_channel;
-    m->current_limit = current_limit;
+    m->current_limit = ma_to_adc_units(current_limit_ma);
     m->last_reading = 0;
     m->state = POWER_MODE_OFF;
     m->prev_state = POWER_MODE_OFF;
@@ -60,6 +66,10 @@ void motor_init(motor_t *m, char track_id,
     // Init ADC
     adc_init();
     adc_gpio_init(26 + adc_channel);
+}
+
+void motor_set_current_limit_ma(motor_t *m, uint16_t ma) {
+    m->current_limit = ma_to_adc_units(ma);
 }
 
 static uint16_t motor_read_adc(motor_t *m) {

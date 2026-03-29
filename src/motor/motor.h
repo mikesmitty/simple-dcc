@@ -39,7 +39,8 @@ typedef struct {
 void motor_init(motor_t *m, char track_id,
                 uint32_t power_pin, uint32_t signal_pin, uint32_t brake_pin,
                 uint32_t fault_pin, uint32_t adc_channel,
-                uint16_t current_limit);
+                uint16_t current_limit_ma);
+void motor_set_current_limit_ma(motor_t *m, uint16_t ma);
 void motor_set_power(motor_t *m, bool on);
 void motor_update(motor_t *m);
 bool motor_is_on(motor_t *m);

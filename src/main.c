@@ -19,11 +19,11 @@
 #define WAVEGEN_QUEUE_DEPTH  8
 #define PQUEUE_INPUT_DEPTH  16
 
-static wavegen_t         wavegen;
+wavegen_t                wavegen;
 static dcc_engine_t      dcc_engine;
 static priority_queue_t  pqueue;
-static motor_t           motor_a;
-static motor_t           motor_b;
+motor_t                  motor_a;
+motor_t                  motor_b;
 static track_t           track_main;
 static track_t           track_prog;
 static event_bus_t       event_bus;
@@ -93,6 +93,10 @@ int main(void) {
     // sleep_ms(2000);
     printf("\n[INIT] starting simple-dcc\n");
 
+    // Load configuration FIRST so hardware init can use it
+    lcc_interface_load_config();
+    printf("[INIT] config loaded\n");
+
     packet_pool_init();
     printf("[INIT] packet pool ready\n");
 
@@ -101,13 +105,20 @@ int main(void) {
     pqueue_input_queue = xQueueCreate(PQUEUE_INPUT_DEPTH, sizeof(dcc_packet_t *));
     printf("[INIT] queues created\n");
 
+    // Retrieve pin mapping from config
+    uint8_t sig_a, pwr_a, brk_a, flt_a, adc_a;
+    uint8_t sig_b, pwr_b, brk_b, flt_b, adc_b;
+    lcc_interface_get_pins_main(&sig_a, &pwr_a, &brk_a, &flt_a, &adc_a);
+    lcc_interface_get_pins_prog(&sig_b, &pwr_b, &brk_b, &flt_b, &adc_b);
+
     // Init wavegen (PIO)
-    if (!wavegen_init(&wavegen, WAVEGEN_NORMAL,
-                      PIN_SIGNAL_A, 2, PIN_BRAKE_A)) {
+    bool railcom = lcc_interface_railcom_enabled();
+    if (!wavegen_init(&wavegen, railcom ? WAVEGEN_NORMAL : WAVEGEN_NO_CUTOUT,
+                      sig_a, 2, brk_a)) {
         printf("[INIT] ERROR: wavegen init failed\n");
         for (;;) {}
     }
-    printf("[INIT] wavegen ready (PIO)\n");
+    printf("[INIT] wavegen ready (PIO, RailCom=%s)\n", railcom ? "ON" : "OFF");
 
     // Init packet scheduling
     pqueue_init(&pqueue, pqueue_input_queue, wavegen_queue);
@@ -115,13 +126,13 @@ int main(void) {
     printf("[INIT] DCC engine ready\n");
 
     // Init motor drivers and tracks
-    motor_init(&motor_a, 'A', PIN_POWER_A, PIN_SIGNAL_A, PIN_BRAKE_A,
-               PIN_FAULT_A, ADC_CHANNEL_A, ADC_CURRENT_LIMIT_MAIN);
-    motor_init(&motor_b, 'B', PIN_POWER_B, PIN_SIGNAL_B, PIN_BRAKE_B,
-               PIN_FAULT_B, ADC_CHANNEL_B, ADC_CURRENT_LIMIT_MAIN);
+    uint16_t limit_main = lcc_interface_main_limit_ma();
+    uint16_t limit_prog = lcc_interface_prog_limit_ma();
+    motor_init(&motor_a, 'A', pwr_a, sig_a, brk_a, flt_a, adc_a, limit_main);
+    motor_init(&motor_b, 'B', pwr_b, sig_b, brk_b, flt_b, adc_b, limit_prog);
     track_init(&track_main, 'A', TRACK_MODE_MAIN, &motor_a);
     track_init(&track_prog, 'B', TRACK_MODE_PROG, &motor_b);
-    printf("[INIT] motors and tracks ready\n");
+    printf("[INIT] motors and tracks ready (limits: %dmA/%dmA)\n", limit_main, limit_prog);
 
     // Init event bus and LCC
     event_bus_init(&event_bus);

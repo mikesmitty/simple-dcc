@@ -25,6 +25,8 @@ typedef struct {
 
 bool wavegen_init(wavegen_t *wg, wavegen_mode_t mode,
                   uint signal_pin, uint signal_pin_count, uint brake_pin);
+bool wavegen_reinit(wavegen_t *wg, wavegen_mode_t mode,
+                    uint signal_pin, uint signal_pin_count, uint brake_pin);
 void wavegen_enable(wavegen_t *wg, bool enabled);
 void wavegen_send(wavegen_t *wg, dcc_packet_t *pkt);
 

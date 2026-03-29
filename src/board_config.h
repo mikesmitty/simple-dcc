@@ -21,7 +21,7 @@
 
 // ---- Motor shield current sensing ----
 #define SENSE_FACTOR_8874   1.27f   // mA per ADC unit
-#define MAX_CURRENT_MAIN_MA 5000
+#define MAX_CURRENT_MAIN_MA 2000
 #define MAX_CURRENT_PROG_MA 250
 
 // ---- DCC engine limits ----

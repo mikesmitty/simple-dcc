@@ -71,6 +71,24 @@ bool wavegen_init(wavegen_t *wg, wavegen_mode_t mode,
     return true;
 }
 
+bool wavegen_reinit(wavegen_t *wg, wavegen_mode_t mode,
+                    uint signal_pin, uint signal_pin_count, uint brake_pin) {
+    if (!wg->initialized) return false;
+
+    wavegen_enable(wg, false);
+    
+    // Stop and unclaim SMs
+    pio_sm_set_enabled(wg->wave_pio, wg->wave_sm, false);
+    pio_sm_unclaim(wg->wave_pio, wg->wave_sm);
+    if (wg->mode == WAVEGEN_NORMAL) {
+        pio_sm_set_enabled(wg->cutout_pio, wg->cutout_sm, false);
+        pio_sm_unclaim(wg->cutout_pio, wg->cutout_sm);
+    }
+    
+    wg->initialized = false;
+    return wavegen_init(wg, mode, signal_pin, signal_pin_count, brake_pin);
+}
+
 void wavegen_enable(wavegen_t *wg, bool enabled) {
     if (!wg->initialized) return;
 

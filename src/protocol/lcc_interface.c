@@ -2,6 +2,9 @@
 #include "protocol/lcc_traction.h"
 #include "serial/serial.h"
 #include "util/nv_storage.h"
+#include "board_config.h"
+#include "wavegen/wavegen.h"
+#include "motor/motor.h"
 
 #include "openlcb/openlcb_config.h"
 #include "openlcb/openlcb_gridconnect.h"
@@ -34,6 +37,11 @@ static node_id_t g_train_node_id_base;
 // --- Configuration memory (RAM-backed with Flash persistence, space 0xFD) ---
 
 #define CONFIG_OFFSET_AUTO_CLAIM  127   // after ACDI user fields (63 + 64)
+#define CONFIG_OFFSET_RAILCOM     128
+#define CONFIG_OFFSET_MAIN_LIMIT  129   // 2 bytes
+#define CONFIG_OFFSET_PROG_LIMIT  131   // 2 bytes
+#define CONFIG_OFFSET_PINS_MAIN   133   // 5 bytes (Signal, Power, Brake, Fault, ADC)
+#define CONFIG_OFFSET_PINS_PROG   138   // 5 bytes (Signal, Power, Brake, Fault, ADC)
 #define CONFIG_MEM_SIZE           0x0200
 
 static uint8_t cs_config_mem[CONFIG_MEM_SIZE] __attribute__((aligned(256)));
@@ -41,6 +49,24 @@ static uint8_t cs_config_mem[CONFIG_MEM_SIZE] __attribute__((aligned(256)));
 static void config_mem_init_defaults(void) {
     memset(cs_config_mem, 0, CONFIG_MEM_SIZE);
     cs_config_mem[CONFIG_OFFSET_AUTO_CLAIM] = 1;  // default: enabled
+    cs_config_mem[CONFIG_OFFSET_RAILCOM] = 1;     // default: enabled
+    
+    cs_config_mem[CONFIG_OFFSET_MAIN_LIMIT] = (MAX_CURRENT_MAIN_MA >> 8) & 0xFF;
+    cs_config_mem[CONFIG_OFFSET_MAIN_LIMIT+1] = MAX_CURRENT_MAIN_MA & 0xFF;
+    cs_config_mem[CONFIG_OFFSET_PROG_LIMIT] = (MAX_CURRENT_PROG_MA >> 8) & 0xFF;
+    cs_config_mem[CONFIG_OFFSET_PROG_LIMIT+1] = MAX_CURRENT_PROG_MA & 0xFF;
+
+    cs_config_mem[CONFIG_OFFSET_PINS_MAIN]   = PIN_SIGNAL_A;
+    cs_config_mem[CONFIG_OFFSET_PINS_MAIN+1] = PIN_POWER_A;
+    cs_config_mem[CONFIG_OFFSET_PINS_MAIN+2] = PIN_BRAKE_A;
+    cs_config_mem[CONFIG_OFFSET_PINS_MAIN+3] = PIN_FAULT_A;
+    cs_config_mem[CONFIG_OFFSET_PINS_MAIN+4] = ADC_CHANNEL_A;
+
+    cs_config_mem[CONFIG_OFFSET_PINS_PROG]   = PIN_SIGNAL_B;
+    cs_config_mem[CONFIG_OFFSET_PINS_PROG+1] = PIN_POWER_B;
+    cs_config_mem[CONFIG_OFFSET_PINS_PROG+2] = PIN_BRAKE_B;
+    cs_config_mem[CONFIG_OFFSET_PINS_PROG+3] = PIN_FAULT_B;
+    cs_config_mem[CONFIG_OFFSET_PINS_PROG+4] = ADC_CHANNEL_B;
 }
 
 static void flash_flush_timer_callback(TimerHandle_t timer) {
@@ -99,6 +125,8 @@ static uint16_t config_mem_read(openlcb_node_t *node, uint32_t address,
     return count;
 }
 
+extern wavegen_t wavegen;
+
 static uint16_t config_mem_write(openlcb_node_t *node, uint32_t address,
                                  uint16_t count, configuration_memory_buffer_t *buffer) {
     (void)node;
@@ -114,6 +142,28 @@ static uint16_t config_mem_write(openlcb_node_t *node, uint32_t address,
         memcpy(&cs_config_mem[address], buffer, count);
         cs_config_dirty = true;
         xTimerReset(flash_flush_timer, 0);
+
+        // Dynamic updates
+        if (address <= CONFIG_OFFSET_RAILCOM && address + count > CONFIG_OFFSET_RAILCOM) {
+            bool enabled = cs_config_mem[CONFIG_OFFSET_RAILCOM] != 0;
+            DBG("[NV] RailCom cutout dynamically %s\n", enabled ? "ENABLED" : "DISABLED");
+            uint8_t sig, pwr, brk, flt, adc;
+            lcc_interface_get_pins_main(&sig, &pwr, &brk, &flt, &adc);
+            wavegen_reinit(&wavegen, enabled ? WAVEGEN_NORMAL : WAVEGEN_NO_CUTOUT,
+                           sig, 2, brk);
+        }
+        if (address <= CONFIG_OFFSET_MAIN_LIMIT+1 && address + count > CONFIG_OFFSET_MAIN_LIMIT) {
+            uint16_t ma = lcc_interface_main_limit_ma();
+            DBG("[NV] Main current limit dynamically updated to %dmA\n", ma);
+            extern motor_t motor_a;
+            motor_set_current_limit_ma(&motor_a, ma);
+        }
+        if (address <= CONFIG_OFFSET_PROG_LIMIT+1 && address + count > CONFIG_OFFSET_PROG_LIMIT) {
+            uint16_t ma = lcc_interface_prog_limit_ma();
+            DBG("[NV] Prog current limit dynamically updated to %dmA\n", ma);
+            extern motor_t motor_b;
+            motor_set_current_limit_ma(&motor_b, ma);
+        }
     }
     return count;
 }
@@ -220,6 +270,7 @@ static node_id_t get_unique_node_id(void) {
     return id;
 }
 
+// Returns true if auto-claim of DCC addresses is enabled in config memory.
 bool lcc_interface_auto_claim_enabled(void) {
     return cs_config_mem[CONFIG_OFFSET_AUTO_CLAIM] != 0;
 }
@@ -228,23 +279,69 @@ node_id_t lcc_interface_get_train_node_id_base(void) {
     return g_train_node_id_base;
 }
 
+// --- Configuration getters ---
+
+bool lcc_interface_railcom_enabled(void) {
+    return cs_config_mem[CONFIG_OFFSET_RAILCOM] != 0;
+}
+
+uint16_t lcc_interface_main_limit_ma(void) {
+    return (uint16_t)((cs_config_mem[CONFIG_OFFSET_MAIN_LIMIT] << 8) | cs_config_mem[CONFIG_OFFSET_MAIN_LIMIT+1]);
+}
+
+uint16_t lcc_interface_prog_limit_ma(void) {
+    return (uint16_t)((cs_config_mem[CONFIG_OFFSET_PROG_LIMIT] << 8) | cs_config_mem[CONFIG_OFFSET_PROG_LIMIT+1]);
+}
+
+void lcc_interface_get_pins_main(uint8_t *sig, uint8_t *pwr, uint8_t *brk, uint8_t *flt, uint8_t *adc) {
+    if (sig) *sig = cs_config_mem[CONFIG_OFFSET_PINS_MAIN];
+    if (pwr) *pwr = cs_config_mem[CONFIG_OFFSET_PINS_MAIN+1];
+    if (brk) *brk = cs_config_mem[CONFIG_OFFSET_PINS_MAIN+2];
+    if (flt) *flt = cs_config_mem[CONFIG_OFFSET_PINS_MAIN+3];
+    if (adc) *adc = cs_config_mem[CONFIG_OFFSET_PINS_MAIN+4];
+}
+
+void lcc_interface_get_pins_prog(uint8_t *sig, uint8_t *pwr, uint8_t *brk, uint8_t *flt, uint8_t *adc) {
+    if (sig) *sig = cs_config_mem[CONFIG_OFFSET_PINS_PROG];
+    if (pwr) *pwr = cs_config_mem[CONFIG_OFFSET_PINS_PROG+1];
+    if (brk) *brk = cs_config_mem[CONFIG_OFFSET_PINS_PROG+2];
+    if (flt) *flt = cs_config_mem[CONFIG_OFFSET_PINS_PROG+3];
+    if (adc) *adc = cs_config_mem[CONFIG_OFFSET_PINS_PROG+4];
+}
+
+void lcc_interface_load_config(void) {
+    // Load config from flash, or init to defaults if flash is empty
+    if (!nv_storage_init(cs_config_mem, CONFIG_MEM_SIZE)) {
+        DBG("[NV] no config in flash, using defaults\n");
+        config_mem_init_defaults();
+        cs_config_dirty = true;
+    } else {
+        DBG("[NV] config loaded from flash\n");
+        // Migration check: If the main current limit or essential pins are 0, 
+        // this flash was likely from an older version. Populate with new defaults.
+        uint16_t main_limit = (uint16_t)((cs_config_mem[CONFIG_OFFSET_MAIN_LIMIT] << 8) | cs_config_mem[CONFIG_OFFSET_MAIN_LIMIT+1]);
+        uint8_t sig_pin = cs_config_mem[CONFIG_OFFSET_PINS_MAIN];
+        if (main_limit == 0 || sig_pin == 0) {
+            DBG("[NV] old or incomplete config detected (limit=%d, sig=%d), applying new defaults\n", main_limit, sig_pin);
+            config_mem_init_defaults();
+            cs_config_dirty = true;
+        }
+    }
+}
+
 void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_input) {
     (void)pqueue_input;
 
     g_dcc_engine = dcc;
     g_track_main = track;
 
-    // Load config from flash, or init to defaults if flash is empty
-    if (!nv_storage_init(cs_config_mem, CONFIG_MEM_SIZE)) {
-        DBG("[NV] no config in flash, using defaults\n");
-        config_mem_init_defaults();
-    } else {
-        DBG("[NV] config loaded from flash\n");
-    }
-
     lcc_mutex = xSemaphoreCreateMutex();
     flash_flush_timer = xTimerCreate("flash_flush", pdMS_TO_TICKS(2000),
                                      pdFALSE, NULL, flash_flush_timer_callback);
+
+    if (cs_config_dirty) {
+        xTimerStart(flash_flush_timer, 0);
+    }
 
     // Initialize CAN transport (must be before OpenLcb_initialize)
     static const can_config_t can_cfg = {
