@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/mikesmitty/simple-dcc/compare/v0.3.0...v0.4.0) (2026-03-30)
+
+
+### Features
+
+* **lcc:** add dynamic configuration for RailCom, current limits, and pins ([25e056d](https://github.com/mikesmitty/simple-dcc/commit/25e056d7ae400179e8c64fe48dbc4d6480fe1d54))
+
+
+### Bug Fixes
+
+* **wavegen:** fix RailCom cutout brake pin and leader timing ([ec9e77b](https://github.com/mikesmitty/simple-dcc/commit/ec9e77b40bfecd6d6a7ef646f739e5edb4ebbf10))
+
 ## [0.3.0](https://github.com/mikesmitty/simple-dcc/compare/v0.2.4...v0.3.0) (2026-03-29)
 
 
