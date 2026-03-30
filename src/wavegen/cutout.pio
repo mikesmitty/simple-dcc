@@ -5,9 +5,8 @@
 ;
 ; Each loop iteration is 1 cycle (2us @ 500kHz).
 ; 216 counts * 2us = 432us loop duration.
-; Total time from packet end bit zero crossing to brake release:
-; 26us (offset) + 434us (loop) + 10us (irq/nop/set) = 470us.
-; This fits within the NMRA S-9.3.2 requirement of 454us - 488us.
+; Measured: Tcs = 29us, Tce = 473.5us.
+; This fits within the NMRA S-9.3.2 requirement of 26-32us Tcs, 454-488us Tce.
 
 .program cutout
 

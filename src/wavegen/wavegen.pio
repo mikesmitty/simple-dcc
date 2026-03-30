@@ -62,7 +62,7 @@ byte_reset:
 
     nop               [1]  ; Pad the packet end bit by 2 cycles
     set pins, 0b00    [28] ; Second half of packet end bit
-    set pins, 0b11    [10] ; Start Railcom quarter-wave
+    set pins, 0b11    [12] ; Start Railcom quarter-wave
     irq next 4             ; Trigger the Railcom decoder
     wait 1 irq 5           ; Wait for the Railcom cutout to end
 

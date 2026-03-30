@@ -111,7 +111,17 @@ int main(void) {
     lcc_interface_get_pins_main(&sig_a, &pwr_a, &brk_a, &flt_a, &adc_a);
     lcc_interface_get_pins_prog(&sig_b, &pwr_b, &brk_b, &flt_b, &adc_b);
 
-    // Init wavegen (PIO)
+    // Init motor drivers and tracks (before wavegen so PIO can override brake pin mux)
+    uint16_t limit_main = lcc_interface_main_limit_ma();
+    uint16_t limit_prog = lcc_interface_prog_limit_ma();
+    motor_init(&motor_a, 'A', pwr_a, sig_a, brk_a, flt_a, adc_a, limit_main);
+    motor_init(&motor_b, 'B', pwr_b, sig_b, brk_b, flt_b, adc_b, limit_prog);
+    track_init(&track_main, 'A', TRACK_MODE_MAIN, &motor_a);
+    track_init(&track_prog, 'B', TRACK_MODE_PROG, &motor_b);
+    printf("[INIT] motors and tracks ready (limits: %dmA/%dmA)\n", limit_main, limit_prog);
+
+    // Init wavegen (PIO) — must be after motor_init so pio_gpio_init() takes
+    // final ownership of the brake pin away from SIO
     bool railcom = lcc_interface_railcom_enabled();
     if (!wavegen_init(&wavegen, railcom ? WAVEGEN_NORMAL : WAVEGEN_NO_CUTOUT,
                       sig_a, 2, brk_a)) {
@@ -124,15 +134,6 @@ int main(void) {
     pqueue_init(&pqueue, pqueue_input_queue, wavegen_queue);
     dcc_init(&dcc_engine, pqueue_input_queue);
     printf("[INIT] DCC engine ready\n");
-
-    // Init motor drivers and tracks
-    uint16_t limit_main = lcc_interface_main_limit_ma();
-    uint16_t limit_prog = lcc_interface_prog_limit_ma();
-    motor_init(&motor_a, 'A', pwr_a, sig_a, brk_a, flt_a, adc_a, limit_main);
-    motor_init(&motor_b, 'B', pwr_b, sig_b, brk_b, flt_b, adc_b, limit_prog);
-    track_init(&track_main, 'A', TRACK_MODE_MAIN, &motor_a);
-    track_init(&track_prog, 'B', TRACK_MODE_PROG, &motor_b);
-    printf("[INIT] motors and tracks ready (limits: %dmA/%dmA)\n", limit_main, limit_prog);
 
     // Init event bus and LCC
     event_bus_init(&event_bus);
