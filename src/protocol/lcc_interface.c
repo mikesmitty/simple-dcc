@@ -381,10 +381,11 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
     node_id_t cs_id = get_unique_node_id();
     g_cs_node = OpenLcb_create_node(cs_id, &OpenLcbUserConfig_node_parameters);
 
-    // Derived train node base: use board unique bytes for middle 16 bits.
-    // This ensures that different command stations use different ID ranges.
-    // 0x0601 (prefix) + BBBB (board-specific) + 0000 (address space)
-    g_train_node_id_base = 0x060100000000ULL | (cs_id & 0x0000FFFF0000ULL);
+    // Well-known OpenLCB DCC-proxy train node ID prefix: 06.01.00.00.<addr>.
+    // Throttles (JMRI, WiThrottle, etc.) probe for trains using this fixed
+    // prefix, so the CS must advertise train nodes in this range to be
+    // discoverable by DCC address.
+    g_train_node_id_base = 0x060100000000ULL;
 
     // Register CS as consumer of well-known emergency events
     OpenLcbApplication_register_consumer_eventid(g_cs_node, EVENT_ID_EMERGENCY_OFF, EVENT_STATUS_SET);
