@@ -130,6 +130,8 @@ pico_enable_stdio_rtt(simple-dcc 1)
 # where the SDK's alarm-based tud_task() background IRQ works reliably).
 target_compile_definitions(simple-dcc PRIVATE
     PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=2000
+    USBD_MANUFACTURER="simple-dcc"
+    USBD_PRODUCT="DCC Command Station"
 )
 
 # Generate UF2/BIN/HEX outputs
