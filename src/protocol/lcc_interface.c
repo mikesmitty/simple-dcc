@@ -28,6 +28,8 @@ static SemaphoreHandle_t lcc_mutex;
 dcc_engine_t *g_dcc_engine;
 static track_t *g_track_main;
 static openlcb_node_t *g_cs_node;
+// Flag accessed from task_protocol (OpenLcb config writes) and the FreeRTOS
+// timer task (flush callback). SMP-safe via __atomic_* builtins.
 static bool    cs_config_dirty = false;
 static TimerHandle_t flash_flush_timer;
 
@@ -71,18 +73,19 @@ static void config_mem_init_defaults(void) {
 
 static void flash_flush_timer_callback(TimerHandle_t timer) {
     (void)timer;
-    if (cs_config_dirty) {
+    if (__atomic_load_n(&cs_config_dirty, __ATOMIC_SEQ_CST)) {
         DBG("[NV] flushing config to flash\n");
         if (nv_storage_write(cs_config_mem, CONFIG_MEM_SIZE)) {
-            cs_config_dirty = false;
+            __atomic_store_n(&cs_config_dirty, false, __ATOMIC_SEQ_CST);
         } else {
             DBG("[NV] ERROR: flash flush failed\n");
         }
     }
 }
 
-// Pending train node creation (set by serial task, consumed by protocol task)
-static volatile uint16_t pending_train_addr;
+// Pending train node creation. Set by task_serial via lcc_interface_on_rx_can_msg,
+// read/cleared by task_protocol via process_pending_train_node. SMP-safe via atomics.
+static uint16_t pending_train_addr;
 
 // --- CAN driver shim (GridConnect over USB CDC) ---
 
@@ -140,7 +143,7 @@ static uint16_t config_mem_write(openlcb_node_t *node, uint32_t address,
     // Only mark dirty if something actually changed
     if (memcmp(&cs_config_mem[address], buffer, count) != 0) {
         memcpy(&cs_config_mem[address], buffer, count);
-        cs_config_dirty = true;
+        __atomic_store_n(&cs_config_dirty, true, __ATOMIC_SEQ_CST);
         xTimerReset(flash_flush_timer, 0);
 
         // Dynamic updates
@@ -175,7 +178,7 @@ static void factory_reset(openlcb_statemachine_info_t *statemachine_info,
     DBG("[NV] factory reset: clearing config\n");
     config_mem_init_defaults();
     if (nv_storage_write(cs_config_mem, CONFIG_MEM_SIZE)) {
-        cs_config_dirty = false;
+        __atomic_store_n(&cs_config_dirty, false, __ATOMIC_SEQ_CST);
     }
 }
 
@@ -311,13 +314,15 @@ void lcc_interface_get_pins_prog(uint8_t *sig, uint8_t *pwr, uint8_t *brk, uint8
 
 void lcc_interface_load_config(void) {
     // Load config from flash, or init to defaults if flash is empty
+    // Runs before the scheduler starts, so plain assignment to cs_config_dirty
+    // is race-free here. Post-scheduler writes use __atomic_store_n.
     if (!nv_storage_init(cs_config_mem, CONFIG_MEM_SIZE)) {
         DBG("[NV] no config in flash, using defaults\n");
         config_mem_init_defaults();
         cs_config_dirty = true;
     } else {
         DBG("[NV] config loaded from flash\n");
-        // Migration check: If the main current limit or essential pins are 0, 
+        // Migration check: If the main current limit or essential pins are 0,
         // this flash was likely from an older version. Populate with new defaults.
         uint16_t main_limit = (uint16_t)((cs_config_mem[CONFIG_OFFSET_MAIN_LIMIT] << 8) | cs_config_mem[CONFIG_OFFSET_MAIN_LIMIT+1]);
         uint8_t sig_pin = cs_config_mem[CONFIG_OFFSET_PINS_MAIN];
@@ -336,10 +341,11 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
     g_track_main = track;
 
     lcc_mutex = xSemaphoreCreateMutex();
+    configASSERT(lcc_mutex != NULL);
     flash_flush_timer = xTimerCreate("flash_flush", pdMS_TO_TICKS(2000),
                                      pdFALSE, NULL, flash_flush_timer_callback);
 
-    if (cs_config_dirty) {
+    if (__atomic_load_n(&cs_config_dirty, __ATOMIC_SEQ_CST)) {
         xTimerStart(flash_flush_timer, 0);
     }
 
@@ -393,10 +399,6 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
     OpenLcbApplication_register_consumer_eventid(g_cs_node, EVENT_ID_EMERGENCY_STOP, EVENT_STATUS_SET);
     OpenLcbApplication_register_consumer_eventid(g_cs_node, EVENT_ID_CLEAR_EMERGENCY_STOP, EVENT_STATUS_CLEAR);
 
-    // Enable track power at startup (standard CS behavior)
-    track_set_power(g_track_main, true);
-    DBG("[INIT] track power enabled, motor state=%d\n", g_track_main->motor->state);
-
     // Start 100ms timer
     lcc_timer = xTimerCreate("lcc_tick", pdMS_TO_TICKS(100),
                              pdTRUE, NULL, lcc_timer_callback);
@@ -422,13 +424,12 @@ void lcc_interface_on_rx_can_msg(can_msg_t *msg) {
         return;
 
     DBG("[RX] verify_node_id for train addr=%u\n", addr);
-    pending_train_addr = addr;
+    __atomic_store_n(&pending_train_addr, addr, __ATOMIC_SEQ_CST);
 }
 
 static void process_pending_train_node(void) {
-    uint16_t addr = pending_train_addr;
+    uint16_t addr = __atomic_exchange_n(&pending_train_addr, 0, __ATOMIC_SEQ_CST);
     if (addr == 0) return;
-    pending_train_addr = 0;
 
     node_id_t train_id = g_train_node_id_base | (uint64_t)addr;
     openlcb_node_t *existing_node = OpenLcbNode_find_by_node_id(train_id);

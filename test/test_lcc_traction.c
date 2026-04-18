@@ -33,7 +33,7 @@ void dcc_set_throttle(dcc_engine_t *engine, uint16_t addr, uint8_t speed, bool f
 
 void dcc_set_function(dcc_engine_t *engine, uint16_t addr, uint16_t fn_addr, bool on) {}
 void dcc_emergency_stop(dcc_engine_t *engine, uint16_t addr) {}
-loco_state_t *dcc_get_or_create_loco(dcc_engine_t *engine, uint16_t addr) { return NULL; }
+void dcc_ensure_loco(dcc_engine_t *engine, uint16_t addr) {}
 
 // lcc_interface mocks
 bool lcc_interface_auto_claim_enabled(void) { return true; }

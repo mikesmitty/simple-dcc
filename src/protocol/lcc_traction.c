@@ -135,7 +135,7 @@ openlcb_node_t *lcc_traction_on_search_no_match(uint16_t search_address, uint8_t
     }
 
     // Create corresponding loco in DCC engine
-    dcc_get_or_create_loco(g_dcc_engine, search_address);
+    dcc_ensure_loco(g_dcc_engine, search_address);
 
     return node;
 }

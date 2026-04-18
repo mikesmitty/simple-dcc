@@ -1,13 +1,20 @@
 #include "dcc/packet.h"
 #include <string.h>
 
+#include "FreeRTOS.h"
+#include "semphr.h"
+
 static dcc_packet_t packet_pool[PACKET_POOL_SIZE];
+static SemaphoreHandle_t pool_mutex;
 
 void packet_pool_init(void) {
     memset(packet_pool, 0, sizeof(packet_pool));
+    pool_mutex = xSemaphoreCreateMutex();
+    configASSERT(pool_mutex != NULL);
 }
 
 dcc_packet_t *packet_alloc(void) {
+    xSemaphoreTake(pool_mutex, portMAX_DELAY);
     for (int i = 0; i < PACKET_POOL_SIZE; i++) {
         if (!packet_pool[i].in_use) {
             packet_pool[i].in_use = true;
@@ -15,16 +22,19 @@ dcc_packet_t *packet_alloc(void) {
             packet_pool[i].address = 0;
             packet_pool[i].priority = PRIORITY_NORMAL;
             packet_pool[i].repeats = 0;
+            xSemaphoreGive(pool_mutex);
             return &packet_pool[i];
         }
     }
+    xSemaphoreGive(pool_mutex);
     return NULL;
 }
 
 void packet_free(dcc_packet_t *pkt) {
-    if (pkt) {
-        pkt->in_use = false;
-    }
+    if (!pkt) return;
+    xSemaphoreTake(pool_mutex, portMAX_DELAY);
+    pkt->in_use = false;
+    xSemaphoreGive(pool_mutex);
 }
 
 void packet_reset(dcc_packet_t *pkt) {

@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <assert.h>
 
 typedef void* QueueHandle_t;
 typedef void* SemaphoreHandle_t;
@@ -15,6 +16,7 @@ typedef uint32_t TickType_t;
 #define pdFALSE false
 #define pdMS_TO_TICKS(x) (x)
 #define portTICK_PERIOD_MS 1
+#define configASSERT(x) assert(x)
 
 static inline void xSemaphoreTake(SemaphoreHandle_t x, TickType_t t) {}
 static inline void xSemaphoreGive(SemaphoreHandle_t x) {}

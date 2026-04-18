@@ -12,6 +12,7 @@ add_executable(test_packet
     ${CMAKE_CURRENT_LIST_DIR}/../src/dcc/packet.c
 )
 target_include_directories(test_packet PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../src
 )
 
@@ -20,6 +21,7 @@ add_executable(test_priority_queue_logic
     ${CMAKE_CURRENT_LIST_DIR}/../src/dcc/packet.c
 )
 target_include_directories(test_priority_queue_logic PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../src
 )
 

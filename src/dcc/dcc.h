@@ -25,16 +25,22 @@ typedef enum {
     LOOP_STATE_FN_GROUP3,
     LOOP_STATE_FN_GROUP4,
     LOOP_STATE_FN_GROUP5,
+    LOOP_STATE_FN_GROUP6,
+    LOOP_STATE_FN_GROUP7,
+    LOOP_STATE_FN_GROUP8,
+    LOOP_STATE_FN_GROUP9,
+    LOOP_STATE_FN_GROUP10,
     LOOP_STATE_RESTART,
 } loop_state_t;
 
 typedef struct {
     bool         active;
     uint16_t     address;
-    uint8_t      speed_step;   // bit 7 = direction, 6-0 = speed
+    uint8_t      speed_step;     // bit 7 = direction, 6-0 = speed
     speed_mode_t speed_mode;
-    uint32_t     functions;    // F0-F31 bitmask
-    uint8_t      group_flags;  // Which function groups have been touched
+    uint64_t     functions;      // F0-F63 bitmask
+    uint8_t      functions_hi;   // F64-F68 in bits 0-4
+    uint16_t     group_flags;    // Which function groups have been touched (10 groups)
 } loco_state_t;
 
 typedef struct {
@@ -46,10 +52,10 @@ typedef struct {
 
 void dcc_init(dcc_engine_t *dcc, QueueHandle_t output_queue);
 
-// Loco state management
-loco_state_t *dcc_get_or_create_loco(dcc_engine_t *dcc, uint16_t address);
-loco_state_t *dcc_get_loco(dcc_engine_t *dcc, uint16_t address);
-void          dcc_forget_loco(dcc_engine_t *dcc, uint16_t address);
+// Loco state management. These never expose loco_state_t pointers so that
+// all access to per-loco fields stays inside dcc.c under the engine mutex.
+void dcc_ensure_loco(dcc_engine_t *dcc, uint16_t address);
+void dcc_forget_loco(dcc_engine_t *dcc, uint16_t address);
 
 // Commands
 void dcc_set_throttle(dcc_engine_t *dcc, uint16_t address,
