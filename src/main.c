@@ -12,9 +12,7 @@
 #include "serial/serial.h"
 #include "protocol/lcc_interface.h"
 #include "motor/motor.h"
-#include "motor/profile.h"
 #include "track/track.h"
-#include "util/event_bus.h"
 
 #define WAVEGEN_QUEUE_DEPTH  8
 #define PQUEUE_INPUT_DEPTH  16
@@ -26,17 +24,12 @@ motor_t                  motor_a;
 motor_t                  motor_b;
 static track_t           track_main;
 static track_t           track_prog;
-static event_bus_t       event_bus;
 
 QueueHandle_t wavegen_queue;
 static QueueHandle_t pqueue_input_queue;
 
 // Track monitor task params
 static motor_t *motors[] = { &motor_a, &motor_b };
-typedef struct {
-    motor_t **motors;
-    uint8_t   count;
-} track_monitor_params_t;
 static track_monitor_params_t monitor_params = {
     .motors = motors,
     .count = 2,
@@ -140,8 +133,6 @@ int main(void) {
     dcc_init(&dcc_engine, pqueue_input_queue);
     printf("[INIT] DCC engine ready\n");
 
-    // Init event bus and LCC
-    event_bus_init(&event_bus);
     lcc_interface_init(&dcc_engine, &track_main, pqueue_input_queue);
     printf("[INIT] LCC interface ready\n");
 

@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-void serial_init(void);
 void serial_write(const uint8_t *data, uint16_t len);
 bool serial_write_ready(void);
 

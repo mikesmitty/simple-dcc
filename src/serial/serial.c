@@ -8,10 +8,6 @@
 #include "lcc/lcc_if.h"
 #include "util/dbg.h"
 
-void serial_init(void) {
-    // stdio_init_all() is called in main
-}
-
 void serial_write(const uint8_t *data, uint16_t len) {
     for (uint16_t i = 0; i < len; i++) {
         putchar_raw(data[i]);

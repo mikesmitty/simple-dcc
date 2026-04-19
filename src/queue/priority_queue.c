@@ -72,10 +72,9 @@ dcc_packet_t *pqueue_pop(priority_queue_t *pq) {
     dcc_packet_t *top = pq->items[0];
 
     if (top->repeats > 0) {
-        top->repeats--;
-        // Allocate a copy for the caller
         dcc_packet_t *copy = packet_alloc();
         if (!copy) return NULL;
+        top->repeats--;
         memcpy(copy->data, top->data, top->len);
         copy->len = top->len;
         copy->address = top->address;

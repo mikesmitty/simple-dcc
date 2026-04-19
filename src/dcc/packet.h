@@ -4,9 +4,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "board_config.h"  // PACKET_POOL_SIZE
+
 #define MAX_PACKET_DATA   6
 #define MAX_ENCODED_WORDS 3
-#define PACKET_POOL_SIZE  64
 
 #define BROADCAST_ADDRESS 0xFFFF
 

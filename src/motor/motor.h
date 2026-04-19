@@ -45,6 +45,12 @@ void motor_set_power(motor_t *m, bool on);
 void motor_update(motor_t *m);
 bool motor_is_on(motor_t *m);
 
+// Track monitor task data: array of motor pointers
+typedef struct {
+    motor_t **motors;
+    uint8_t   count;
+} track_monitor_params_t;
+
 // FreeRTOS task: 1ms overcurrent monitoring
 void task_track_monitor(void *params);
 

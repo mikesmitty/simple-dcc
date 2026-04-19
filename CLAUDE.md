@@ -25,9 +25,9 @@ cmake .. && make && ctest
 ## Architecture
 
 - **Target:** RP2350 (Pico 2), EX-MotorShield8874
-- **RTOS:** FreeRTOS (single-core, 7 priorities, Heap4)
+- **RTOS:** FreeRTOS (SMP dual-core, 7 priorities, Heap4)
 - **Protocol:** LCC/OpenLCB via GridConnect CAN frames over USB CDC
-- **LCC library:** OpenLcbCLib (git submodule at `lib/OpenLcbCLib/`)
+- **LCC stack:** in-tree C implementation at `src/lcc/`
 
 ### FreeRTOS Tasks (by priority)
 
@@ -37,14 +37,14 @@ cmake .. && make && ctest
 | 5 | task_priority_queue | Dedup, reorder, dispatch packets |
 | 4 | task_track_monitor | 1ms overcurrent/fault check |
 | 3 | task_dcc_reminder | Cycle speed + function reminders |
-| 2 | task_protocol | Run OpenLcb_run() loop |
+| 2 | task_protocol | Pump LCC RX queue + 100 ms alias/flush tick |
 | 1 | task_serial | USB CDC read, GridConnect parsing |
 
 ### Data Flow
 
 ```
-USB CDC → task_serial → GridConnect parser → CAN RX → OpenLcbCLib
-OpenLcbCLib traction callbacks → DCC engine → priority queue → wavegen → PIO
+USB CDC → task_serial → GridConnect parser → CAN RX → src/lcc/
+src/lcc/ traction callbacks → DCC engine → priority queue → wavegen → PIO
 ```
 
 ## Conventions

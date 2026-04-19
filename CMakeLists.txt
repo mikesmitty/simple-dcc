@@ -107,7 +107,6 @@ add_executable(simple-dcc
     src/protocol/lcc_interface.c
     src/motor/motor.c
     src/track/track.c
-    src/util/event_bus.c
     src/util/nv_storage.c
 )
 

@@ -26,9 +26,6 @@
 
 // ---- DCC engine limits ----
 #define MAX_LOCOS           50
-#define PACKET_POOL_SIZE    64
-
-// ---- LED (onboard, active high on this board) ----
-#define PIN_LED             23
+#define PACKET_POOL_SIZE    80
 
 #endif // BOARD_CONFIG_H

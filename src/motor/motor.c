@@ -1,5 +1,4 @@
 #include "motor/motor.h"
-#include "motor/profile.h"
 #include "board_config.h"
 
 #include <stdio.h>
@@ -176,12 +175,6 @@ void motor_update(motor_t *m) {
     }
     m->prev_state = m->state;
 }
-
-// Track monitor task data: array of motor pointers
-typedef struct {
-    motor_t **motors;
-    uint8_t   count;
-} track_monitor_params_t;
 
 void task_track_monitor(void *params) {
     track_monitor_params_t *p = (track_monitor_params_t *)params;
