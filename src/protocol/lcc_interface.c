@@ -10,6 +10,7 @@
 #include "lcc/lcc_defs.h"
 #include "lcc/lcc_memconfig.h"
 #include "lcc/lcc_events.h"
+#include "lcc/lcc_traction.h"
 #include "cdi_data.h"
 
 #include "FreeRTOS.h"
@@ -48,6 +49,22 @@ static lcc_node_t g_cs_node;
 static const lcc_snip_t g_cs_snip = {
     .mfg_name   = "simple-dcc",
     .model_name = "DCC Command Station",
+    .hw_version = "RP2350",
+    .sw_version = LCC_SW_VERSION,
+    .user_name  = NULL,
+    .user_desc  = NULL,
+};
+
+// --- M5 hard-coded test train ---
+// One DCC-proxy train node so JMRI can drive a real loco end-to-end. The
+// auto-create-on-search flow lands in M7; until then, throttles bind to
+// this node by its node ID (06.01.00.00.00.<addr>).
+#define M5_TEST_TRAIN_DCC_ADDR  3
+static lcc_node_t        g_train_node;
+static lcc_train_state_t g_train_state;
+static const lcc_snip_t  g_train_snip = {
+    .mfg_name   = "simple-dcc",
+    .model_name = "DCC Train Proxy",
     .hw_version = "RP2350",
     .sw_version = LCC_SW_VERSION,
     .user_name  = NULL,
@@ -339,6 +356,26 @@ void lcc_interface_load_config(void) {
     }
 }
 
+// --- Traction hooks -----------------------------------------------------
+// Thin shims that capture g_dcc_engine so the lcc_traction module stays
+// free of a dependency on the DCC engine type.
+
+static void traction_set_throttle(uint16_t addr, uint8_t step, bool forward) {
+    if (g_dcc_engine) dcc_set_throttle(g_dcc_engine, addr, step, forward);
+}
+static void traction_set_function(uint16_t addr, uint16_t fn, bool on) {
+    if (g_dcc_engine) dcc_set_function(g_dcc_engine, addr, fn, on);
+}
+static void traction_emergency_stop(uint16_t addr) {
+    if (g_dcc_engine) dcc_emergency_stop(g_dcc_engine, addr);
+}
+
+static const lcc_traction_hooks_t g_traction_hooks = {
+    .set_throttle   = traction_set_throttle,
+    .set_function   = traction_set_function,
+    .emergency_stop = traction_emergency_stop,
+};
+
 // --- Emergency event handling -----------------------------------------
 
 static void handle_emergency_event(lcc_node_t *node, uint64_t event_id) {
@@ -385,10 +422,8 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
 
     lcc_task_init();
 
-    /* Build and register the CS node. M4 advertises DATAGRAM +
-     * MEMORY_CONFIG + EVENT_EXCHANGE + CDI + ABBREVIATED_CDI so JMRI
-     * exposes the full configuration surface. Traction protocol adds in
-     * M5 via an additional PIP bit. */
+    /* Build and register the CS node. The CS itself does NOT advertise
+     * Train Control — train nodes do (registered separately below). */
     lcc_node_init(&g_cs_node, get_unique_node_id(), LCC_ROLE_CS);
     g_cs_node.snip     = &g_cs_snip;
     g_cs_node.pip_bits = LCC_PIP_SIMPLE_PROTOCOL
@@ -400,6 +435,23 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
                        | LCC_PIP_SIMPLE_NODE_INFO
                        | LCC_PIP_CDI;
     lcc_node_register(&g_cs_node);
+
+    /* M5 hard-coded test train. Auto-create-on-search arrives in M7. */
+    lcc_traction_set_hooks(&g_traction_hooks);
+    lcc_train_state_init(&g_train_state, M5_TEST_TRAIN_DCC_ADDR,
+                         M5_TEST_TRAIN_DCC_ADDR > LCC_DCC_SHORT_ADDR_MAX);
+    lcc_node_init(&g_train_node,
+                  g_train_node_id_base | (uint64_t)M5_TEST_TRAIN_DCC_ADDR,
+                  LCC_ROLE_TRAIN);
+    g_train_node.snip     = &g_train_snip;
+    g_train_node.pip_bits = LCC_PIP_SIMPLE_PROTOCOL
+                          | LCC_PIP_EVENT_EXCHANGE
+                          | LCC_PIP_SIMPLE_NODE_INFO
+                          | LCC_PIP_TRAIN_CONTROL;
+    g_train_node.train    = &g_train_state;
+    lcc_node_register(&g_train_node);
+    if (g_dcc_engine)
+        dcc_ensure_loco(g_dcc_engine, M5_TEST_TRAIN_DCC_ADDR);
 
     /* Memory-config spaces — CDI size is computed from the generated
      * _cdi_data's NUL terminator (strlen gives XML byte count). */

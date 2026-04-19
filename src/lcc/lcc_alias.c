@@ -62,9 +62,12 @@ void lcc_alias_tick(lcc_node_t *node)
         if (node->alias == 0)
             node->alias = lcc_alias_seed(node->id);
 
-        /* Only one node at a time can hold the CID-in-flight slot. If
-         * another node holds it, stay IDLE and try next tick. */
-        lcc_if_alias_lock();
+        /* Only one node at a time can hold the CID-in-flight slot. The
+         * tick loop walks all nodes in a single task, so a blocking take
+         * here would deadlock against the holder we're trying to advance
+         * later in the same loop. */
+        if (!lcc_if_alias_try_lock())
+            break;
         emit_cid_frames(node);
         node->alias_state = LCC_A_CID;
         node->alias_wait_ticks = 0;

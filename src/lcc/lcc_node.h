@@ -32,18 +32,20 @@ typedef struct {
     bool     active;
 } lcc_datagram_rx_t;
 
-struct lcc_snip;  /* defined in lcc_snip.h */
+struct lcc_snip;          /* defined in lcc_snip.h */
+struct lcc_train_state;   /* defined in lcc_traction.h */
 
 typedef struct lcc_node {
-    uint64_t                id;
-    uint16_t                alias;
-    lcc_node_role_t         role;
-    lcc_alias_state_t       alias_state;
-    uint8_t                 alias_wait_ticks;
-    uint8_t                 alias_retries;
-    const struct lcc_snip  *snip;
-    uint64_t                pip_bits;   /* PIP advertisement, lcc_defs.h LCC_PIP_* */
-    lcc_datagram_rx_t       dg_rx;
+    uint64_t                       id;
+    uint16_t                       alias;
+    lcc_node_role_t                role;
+    lcc_alias_state_t              alias_state;
+    uint8_t                        alias_wait_ticks;
+    uint8_t                        alias_retries;
+    const struct lcc_snip         *snip;
+    uint64_t                       pip_bits;  /* PIP advertisement, lcc_defs.h LCC_PIP_* */
+    lcc_datagram_rx_t              dg_rx;
+    struct lcc_train_state        *train;     /* non-NULL iff role == LCC_ROLE_TRAIN */
 } lcc_node_t;
 
 /* Registry: fixed-size static array. CS + up to (LCC_MAX_NODES - 1) trains. */

@@ -57,9 +57,9 @@ bool lcc_if_tx(const lcc_frame_t *frame)
     return true;
 }
 
-void lcc_if_alias_lock(void)
+bool lcc_if_alias_try_lock(void)
 {
-    xSemaphoreTake(alias_mtx, portMAX_DELAY);
+    return xSemaphoreTake(alias_mtx, 0) == pdTRUE;
 }
 
 void lcc_if_alias_unlock(void)

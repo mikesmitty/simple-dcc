@@ -38,10 +38,12 @@ bool lcc_if_rx(lcc_frame_t *out, uint32_t timeout_ms);
  * the host. */
 bool lcc_if_tx(const lcc_frame_t *frame);
 
-/* Serialize alias allocation / CID emission across nodes. Per-node alias
- * state machines take this before entering CID and release it after
- * CONFIRMED / CONFLICT-retry. */
-void lcc_if_alias_lock(void);
+/* Serialize alias allocation / CID emission across nodes. The tick loop
+ * walks all nodes inside one task, so the IDLE→CID transition must use
+ * try_lock and stay IDLE on contention — a blocking take would deadlock
+ * against the holder we'd advance later in the same loop. Released by the
+ * holder when it reaches CONFIRMED or CONFLICT-retry. */
+bool lcc_if_alias_try_lock(void);
 void lcc_if_alias_unlock(void);
 
 /* Fan a single RX frame out to the registered nodes based on frame type:

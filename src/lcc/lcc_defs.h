@@ -75,6 +75,24 @@
 #define LCC_MTI_TRACTION_CONTROL_COMMAND   0x05EB
 #define LCC_MTI_TRACTION_CONTROL_REPLY     0x01E9
 
+/* Traction protocol sub-instruction opcodes (first payload byte after the
+ * 2-byte addressed-message header). Reference: OpenLCB S-9.7.4.1 / S-9.7.4.2.
+ * High bit (0x80) is reserved for the reply-direction flag in some flows;
+ * mask with 0x7F when matching. */
+#define LCC_TRAC_SET_SPEED_DIR    0x00  /* + 2-byte float16 velocity */
+#define LCC_TRAC_SET_FN           0x01  /* + 3-byte BE fn-addr + 2-byte BE value */
+#define LCC_TRAC_EMERGENCY_STOP   0x02  /* no payload */
+#define LCC_TRAC_QUERY_SPEEDS     0x10  /* reply: set/commanded/actual f16 + status */
+#define LCC_TRAC_QUERY_FUNCTION   0x11  /* + 3-byte fn-addr; reply: addr + value */
+#define LCC_TRAC_CONTROLLER_CFG   0x20  /* M6 */
+#define LCC_TRAC_LISTENER_CFG     0x30  /* M8 */
+#define LCC_TRAC_CONSIST_CFG      0x40  /* M8 */
+
+/* DCC short-vs-long address split: addresses 1..127 are "short", 128+ "long".
+ * Throttles encode this in the train search flags but the CS still has to
+ * decide on its own when manually configured. */
+#define LCC_DCC_SHORT_ADDR_MAX  127
+
 /* MTI flag bits */
 #define LCC_MTI_ADDRESS_MASK  0x0008
 #define LCC_MTI_EVENT_MASK    0x0004

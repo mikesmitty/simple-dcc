@@ -6,6 +6,7 @@
 #include "lcc/lcc_snip.h"
 #include "lcc/lcc_datagram.h"
 #include "lcc/lcc_events.h"
+#include "lcc/lcc_traction.h"
 
 #include <string.h>
 
@@ -211,8 +212,10 @@ void lcc_node_handle_frame(lcc_node_t *node, const lcc_frame_t *frame)
     case LCC_MTI_EVENT_REPORT:
         lcc_events_handle_frame(node, frame);
         break;
+    case LCC_MTI_TRACTION_CONTROL_COMMAND:
+        lcc_traction_handle_frame(node, frame);
+        break;
     default:
-        /* Traction lands in M5+; other MTIs are silently dropped. */
         break;
     }
 }

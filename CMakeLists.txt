@@ -80,6 +80,8 @@ add_library(lcc STATIC
     src/lcc/lcc_datagram.c
     src/lcc/lcc_memconfig.c
     src/lcc/lcc_events.c
+    src/lcc/lcc_float16.c
+    src/lcc/lcc_traction.c
     ${CMAKE_CURRENT_BINARY_DIR}/cdi_data.c
 )
 target_include_directories(lcc PUBLIC
