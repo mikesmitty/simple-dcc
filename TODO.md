@@ -23,3 +23,10 @@ Follow-ups from the code review on 2026-04-18. The concurrency fixes and full-DC
 ## Docs
 
 - **`CLAUDE.md` drift.** It says "single-core, 7 priorities, Heap4" but `include/FreeRTOSConfig.h:7` sets `configNUMBER_OF_CORES = 2` (confirmed SMP by the `enable SMP dual-core` commit in CHANGELOG). Update the line to reflect dual-core SMP so future readers / agents don't make wrong assumptions about concurrency safety.
+
+## LCC protocol
+
+- **Remote consist slaves — alias resolution.** `forward_to_consist` in `src/lcc/lcc_traction.c` silently skips any consist member whose node ID doesn't resolve to a locally-registered `lcc_node_t`. Fine for a standalone CS where every consist member is a local train proxy, but it breaks multi-CS consists and consists that include an external LCC-enabled loco. Three reasons it was deferred in M8:
+  1. **Addressed messages are alias-keyed, not node-ID-keyed.** `lcc_node_send_addressed` in `src/lcc/lcc_node.c` bakes `dst_alias` into the 2-byte addressed header — we have the alias for local nodes via `lcc_node_t.alias`, but nothing maps a remote node ID to its current alias.
+  2. **No alias-resolution machinery.** OpenMRN's iface transparently resolves `NodeHandle{id, alias}` by issuing `VERIFY_NODE_ID_GLOBAL` with the target node ID and waiting for `VERIFIED_NODE_ID`. We'd need an alias cache, a pending-forward queue, and retry/timeout state — separate from consist itself (~150 LOC).
+  3. **Aliases rotate.** `CNSTFLAGS_ALIASVALID` lets the throttle supply the slave's alias at ATTACH time (bytes 9-10 of the ATTACH payload — currently ignored). A cached alias can go stale on conflict-driven re-allocation, so any cache also needs invalidation on AMR / RID-collision traffic.

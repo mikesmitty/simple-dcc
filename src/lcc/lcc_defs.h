@@ -85,8 +85,13 @@
 #define LCC_TRAC_QUERY_SPEEDS     0x10  /* reply: set/commanded/actual f16 + status */
 #define LCC_TRAC_QUERY_FUNCTION   0x11  /* + 3-byte fn-addr; reply: addr + value */
 #define LCC_TRAC_CONTROLLER_CFG   0x20  /* + sub-opcode LCC_CTRLREQ_* */
-#define LCC_TRAC_LISTENER_CFG     0x30  /* M8 */
-#define LCC_TRAC_CONSIST_CFG      0x40  /* M8 */
+#define LCC_TRAC_CONSIST_CFG      0x30  /* + sub-opcode LCC_CNSTREQ_* */
+#define LCC_TRAC_TRACTION_MGMT    0x40  /* Reserve/Release/Noop — not implemented */
+
+/* REQ_LISTENER (bit 7) is a flag on SET_SPEED / SET_FN / ESTOP command bytes.
+ * Set by a consist master when forwarding the command to a consist slave so
+ * the slave applies it but does not re-forward to its own consist. */
+#define LCC_TRAC_REQ_LISTENER     0x80
 
 /* Traction Controller Config sub-opcodes (payload byte 1 after 0x20).
  * Reference: OpenMRN TractionDefs.hxx CTRLREQ_*. */
@@ -102,6 +107,26 @@
 #define LCC_CTRLRESP_OK                 0x00
 #define LCC_CTRLRESP_ERR_CONTROLLER     0x01  /* assign refused — controller mismatch */
 #define LCC_CTRLRESP_ERR_TRAIN          0x02  /* assign refused — train unavailable */
+
+/* Traction Consist Config sub-opcodes (payload byte 1 after 0x30).
+ * Reference: OpenMRN TractionDefs.hxx CNSTREQ_*. */
+#define LCC_CNSTREQ_ATTACH_NODE         0x01
+#define LCC_CNSTREQ_DETACH_NODE         0x02
+#define LCC_CNSTREQ_QUERY_NODES         0x03
+
+/* Consist flags (payload byte 2 of ATTACH; byte 4 of QUERY response long form).
+ * Reference: OpenMRN TractionDefs.hxx CNSTFLAGS_*. */
+#define LCC_CNSTFLAGS_ALIASVALID        0x01  /* 2-byte alias follows node ID */
+#define LCC_CNSTFLAGS_REVERSE           0x02  /* flip direction bit on SET_SPEED */
+#define LCC_CNSTFLAGS_LINKF0            0x04  /* forward F0 changes */
+#define LCC_CNSTFLAGS_LINKFN            0x08  /* forward Fn changes (n > 0) */
+#define LCC_CNSTFLAGS_HIDE              0x80  /* UI hint: hide from throttle list */
+
+/* 16-bit OpenLCB error codes used in Consist ATTACH/DETACH responses.
+ * Reference: OpenMRN Defs.hxx ErrorCodes. */
+#define LCC_ERR_OK                      0x0000
+#define LCC_ERR_NOT_FOUND               0x1030
+#define LCC_ERR_ALREADY_EXISTS          0x1032  /* NOT_FOUND | 2 */
 
 /* DCC short-vs-long address split: addresses 1..127 are "short", 128+ "long".
  * Throttles encode this in the train search flags but the CS still has to

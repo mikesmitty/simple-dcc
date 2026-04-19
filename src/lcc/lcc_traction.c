@@ -2,6 +2,7 @@
 #include "lcc/lcc_defs.h"
 #include "lcc/lcc_node.h"
 #include "lcc/lcc_frame.h"
+#include "lcc/lcc_if.h"
 
 #include <string.h>
 
@@ -185,6 +186,244 @@ static void on_controller_config(lcc_node_t *node, const uint8_t *payload,
     }
 }
 
+/* ---- Consist Config (REQ byte 0x30) ----------------------------------- */
+
+static int consist_find(const lcc_train_state_t *t, uint64_t target)
+{
+    for (int i = 0; i < LCC_MAX_CONSIST_SLAVES; i++) {
+        if (t->consist[i].node_id == target)
+            return i;
+    }
+    return -1;
+}
+
+static int consist_count(const lcc_train_state_t *t)
+{
+    int n = 0;
+    for (int i = 0; i < LCC_MAX_CONSIST_SLAVES; i++) {
+        if (t->consist[i].node_id != 0)
+            n++;
+    }
+    return n;
+}
+
+static int consist_find_nth(const lcc_train_state_t *t, int n)
+{
+    int seen = 0;
+    for (int i = 0; i < LCC_MAX_CONSIST_SLAVES; i++) {
+        if (t->consist[i].node_id == 0)
+            continue;
+        if (seen == n)
+            return i;
+        seen++;
+    }
+    return -1;
+}
+
+static void send_consist_attach_reply(const lcc_node_t *node, uint16_t reply_to,
+                                      uint8_t sub_op, uint64_t target,
+                                      uint16_t err)
+{
+    /* Attach/Detach reply: [0x30, sub, target_nid(6), err_hi, err_lo]. */
+    uint8_t reply[10] = { LCC_TRAC_CONSIST_CFG, sub_op };
+    lcc_node_id_to_buf(target, &reply[2]);
+    reply[8] = (uint8_t)(err >> 8);
+    reply[9] = (uint8_t)(err & 0xFF);
+    lcc_node_send_addressed(node, LCC_MTI_TRACTION_CONTROL_REPLY,
+                            reply_to, reply, sizeof(reply));
+}
+
+static void on_consist_attach(lcc_node_t *node, const uint8_t *payload,
+                              uint8_t len, uint16_t reply_to)
+{
+    if (len < 9) return;  /* 0x30, sub, flags, 6-byte NID */
+    uint64_t target = lcc_node_id_from_buf(&payload[3]);
+    uint8_t  flags  = payload[2];
+
+    /* Adding self as a consist slave is a no-op per OpenMRN. */
+    if (target == node->id) {
+        send_consist_attach_reply(node, reply_to, LCC_CNSTREQ_ATTACH_NODE,
+                                  target, LCC_ERR_ALREADY_EXISTS);
+        return;
+    }
+
+    lcc_train_state_t *t = node->train;
+    int idx = consist_find(t, target);
+    if (idx >= 0) {
+        /* Already present: update flags only (OpenMRN semantics). */
+        t->consist[idx].flags = flags;
+        send_consist_attach_reply(node, reply_to, LCC_CNSTREQ_ATTACH_NODE,
+                                  target, LCC_ERR_OK);
+        return;
+    }
+    idx = consist_find(t, 0);
+    if (idx < 0) {
+        /* Table full — report a not-found-ish error. OpenMRN doesn't
+         * define a specific code for "out of space"; ALREADY_EXISTS is
+         * the closest non-OK consist-attach error in the spec. */
+        send_consist_attach_reply(node, reply_to, LCC_CNSTREQ_ATTACH_NODE,
+                                  target, LCC_ERR_ALREADY_EXISTS);
+        return;
+    }
+    t->consist[idx].node_id = target;
+    t->consist[idx].flags   = flags;
+    send_consist_attach_reply(node, reply_to, LCC_CNSTREQ_ATTACH_NODE,
+                              target, LCC_ERR_OK);
+}
+
+static void on_consist_detach(lcc_node_t *node, const uint8_t *payload,
+                              uint8_t len, uint16_t reply_to)
+{
+    if (len < 9) return;
+    uint64_t target = lcc_node_id_from_buf(&payload[3]);
+
+    lcc_train_state_t *t = node->train;
+    int idx = consist_find(t, target);
+    uint16_t err = LCC_ERR_OK;
+    if (idx < 0) {
+        err = LCC_ERR_NOT_FOUND;
+    } else {
+        t->consist[idx].node_id = 0;
+        t->consist[idx].flags   = 0;
+    }
+    send_consist_attach_reply(node, reply_to, LCC_CNSTREQ_DETACH_NODE,
+                              target, err);
+}
+
+static void on_consist_query(lcc_node_t *node, const uint8_t *payload,
+                             uint8_t len, uint16_t reply_to)
+{
+    lcc_train_state_t *t  = node->train;
+    int                sz = consist_count(t);
+    if (sz > 255) sz = 255;
+
+    if (len > 2) {
+        /* Long form: payload[2] is the index. Reply with full entry. */
+        uint8_t id  = payload[2];
+        int     pos = consist_find_nth(t, id);
+        if (pos >= 0) {
+            uint8_t reply[11] = {
+                LCC_TRAC_CONSIST_CFG, LCC_CNSTREQ_QUERY_NODES,
+                (uint8_t)sz, id, t->consist[pos].flags,
+            };
+            lcc_node_id_to_buf(t->consist[pos].node_id, &reply[5]);
+            lcc_node_send_addressed(node, LCC_MTI_TRACTION_CONTROL_REPLY,
+                                    reply_to, reply, sizeof(reply));
+            return;
+        }
+        /* Fall through to short form when the index is out of range. */
+    }
+
+    uint8_t reply[3] = {
+        LCC_TRAC_CONSIST_CFG, LCC_CNSTREQ_QUERY_NODES, (uint8_t)sz,
+    };
+    lcc_node_send_addressed(node, LCC_MTI_TRACTION_CONTROL_REPLY,
+                            reply_to, reply, sizeof(reply));
+}
+
+static void on_consist_config(lcc_node_t *node, const uint8_t *payload,
+                              uint8_t len, uint16_t reply_to)
+{
+    if (len < 2) return;
+    switch (payload[1]) {
+    case LCC_CNSTREQ_ATTACH_NODE: on_consist_attach(node, payload, len, reply_to); break;
+    case LCC_CNSTREQ_DETACH_NODE: on_consist_detach(node, payload, len, reply_to); break;
+    case LCC_CNSTREQ_QUERY_NODES: on_consist_query(node, payload, len, reply_to); break;
+    default:
+        break;
+    }
+}
+
+/* ---- Consist forwarding ------------------------------------------------ */
+
+/* Send a forwarded traction command to one consist slave. Sets the
+ * REQ_LISTENER bit on payload[0] so the slave applies the command but
+ * does not re-forward it to its own consist. Local slaves also get a
+ * direct hand-off to the traction handler so the frame isn't reliant
+ * on USB CDC loopback (which we don't have). */
+static void forward_to_slave(lcc_node_t *src, lcc_node_t *dst,
+                             uint8_t cmd, uint8_t flags,
+                             const uint8_t *payload, uint8_t payload_len)
+{
+    uint8_t fwd[8];
+    if (payload_len > sizeof(fwd)) return;
+    fwd[0] = (uint8_t)(cmd | LCC_TRAC_REQ_LISTENER);
+    if (payload_len > 1)
+        memcpy(&fwd[1], &payload[1], (size_t)(payload_len - 1));
+
+    /* SET_SPEED direction bit (payload[1] MSB) flips for CNSTFLAGS_REVERSE. */
+    if ((cmd & 0x7F) == LCC_TRAC_SET_SPEED_DIR
+        && (flags & LCC_CNSTFLAGS_REVERSE)
+        && payload_len >= 3) {
+        fwd[1] ^= 0x80;
+    }
+
+    lcc_node_send_addressed(src, LCC_MTI_TRACTION_CONTROL_COMMAND,
+                            dst->alias, fwd, payload_len);
+
+    /* Local loopback: synthesize the corresponding single-frame addressed
+     * CAN frame and feed it to the slave's traction handler directly. */
+    lcc_frame_t f;
+    f.id = lcc_can_id(LCC_MTI_TRACTION_CONTROL_COMMAND, src->alias);
+    lcc_frame_build_addressed_hdr(f.data, dst->alias, 0);
+    if (payload_len > 0)
+        memcpy(&f.data[2], fwd, payload_len);
+    f.dlc = (uint8_t)(2 + payload_len);
+    lcc_traction_handle_frame(dst, &f);
+}
+
+/* Decide whether a consist slave should receive this forwarded command.
+ * SET_FN forwarding is gated by CNSTFLAGS_LINKF0 / LINKFN; other
+ * commands always forward. */
+static bool consist_should_forward(uint8_t cmd, uint8_t flags,
+                                   const uint8_t *payload, uint8_t payload_len)
+{
+    if ((cmd & 0x7F) == LCC_TRAC_SET_FN && payload_len >= 4) {
+        uint32_t addr = ((uint32_t)payload[1] << 16)
+                      | ((uint32_t)payload[2] <<  8)
+                      |  (uint32_t)payload[3];
+        if (addr == 0)
+            return (flags & LCC_CNSTFLAGS_LINKF0) != 0;
+        return (flags & LCC_CNSTFLAGS_LINKFN) != 0;
+    }
+    return true;
+}
+
+static void forward_to_consist(lcc_node_t *src, uint16_t src_alias,
+                               uint8_t cmd,
+                               const uint8_t *payload, uint8_t payload_len)
+{
+    /* Forwarded commands carry REQ_LISTENER — never re-forward. */
+    if (cmd & LCC_TRAC_REQ_LISTENER)
+        return;
+
+    lcc_train_state_t *t = src->train;
+    for (int i = 0; i < LCC_MAX_CONSIST_SLAVES; i++) {
+        uint64_t slave_id = t->consist[i].node_id;
+        if (slave_id == 0)
+            continue;
+        uint8_t flags = t->consist[i].flags;
+
+        if (!consist_should_forward(cmd, flags, payload, payload_len))
+            continue;
+
+        /* Skip if the original sender is the slave — avoids bouncing the
+         * command back to the throttle when the throttle itself is in the
+         * consist (rare but legal). */
+        lcc_node_t *dst = NULL;
+        for (int j = 0; j < lcc_node_count(); j++) {
+            lcc_node_t *n = lcc_node_at(j);
+            if (n && n->id == slave_id) { dst = n; break; }
+        }
+        if (!dst || dst == src)
+            continue;
+        if (dst->alias == src_alias)
+            continue;
+
+        forward_to_slave(src, dst, cmd, flags, payload, payload_len);
+    }
+}
+
 static void on_query_function(lcc_node_t *node, const uint8_t *payload,
                               uint8_t len, uint16_t reply_to)
 {
@@ -214,14 +453,25 @@ static void dispatch_traction(lcc_node_t *node, uint16_t reply_to,
                               const uint8_t *payload, uint8_t len)
 {
     if (len < 1) return;
-    uint8_t sub = (uint8_t)(payload[0] & 0x7F);
+    uint8_t cmd = payload[0];
+    uint8_t sub = (uint8_t)(cmd & 0x7F);
     switch (sub) {
-    case LCC_TRAC_SET_SPEED_DIR:  on_set_speed(node, payload, len); break;
-    case LCC_TRAC_SET_FN:         on_set_fn(node, payload, len); break;
-    case LCC_TRAC_EMERGENCY_STOP: on_estop(node); break;
+    case LCC_TRAC_SET_SPEED_DIR:
+        on_set_speed(node, payload, len);
+        forward_to_consist(node, reply_to, cmd, payload, len);
+        break;
+    case LCC_TRAC_SET_FN:
+        on_set_fn(node, payload, len);
+        forward_to_consist(node, reply_to, cmd, payload, len);
+        break;
+    case LCC_TRAC_EMERGENCY_STOP:
+        on_estop(node);
+        forward_to_consist(node, reply_to, cmd, payload, len);
+        break;
     case LCC_TRAC_QUERY_SPEEDS:   on_query_speeds(node, reply_to); break;
     case LCC_TRAC_QUERY_FUNCTION: on_query_function(node, payload, len, reply_to); break;
     case LCC_TRAC_CONTROLLER_CFG: on_controller_config(node, payload, len, reply_to); break;
+    case LCC_TRAC_CONSIST_CFG:    on_consist_config(node, payload, len, reply_to); break;
     default:
         break;
     }

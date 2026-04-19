@@ -10,14 +10,24 @@
 /*
  * Traction protocol handler. Routes addressed MTI 0x05EB sub-instructions
  * (SET_SPEED_DIRECTION, SET_FN, EMERGENCY_STOP, QUERY_SPEEDS, QUERY_FUNCTION,
- * CONTROLLER_CONFIG) onto a hooks table the glue layer fills in with dcc_*()
- * callbacks. Per-train state hangs off lcc_node_t.train.
+ * CONTROLLER_CONFIG, CONSIST_CONFIG) onto a hooks table the glue layer fills
+ * in with dcc_*() callbacks. Per-train state hangs off lcc_node_t.train.
  *
- * M6 scope: the five M5 commands plus Controller Assign/Release/Query. The
- * ASSIGN path "steals" an already-owned train without notifying the old
- * owner, matching OpenMRN's current behaviour (TractionTrain.cxx:319).
- * Listener / Consist land in M8.
+ * M8 scope adds Consist Config (ATTACH/DETACH/QUERY) and REQ_LISTENER
+ * forwarding. There is no separate "Listener Config" sub-opcode in the
+ * OpenLCB spec — 0x80 is a bit flag on forwarded SET_SPEED / SET_FN /
+ * ESTOP commands, set by the consist master to keep the slave from
+ * re-forwarding the command to its own consist.
  */
+
+#ifndef LCC_MAX_CONSIST_SLAVES
+#define LCC_MAX_CONSIST_SLAVES 4
+#endif
+
+typedef struct {
+    uint64_t node_id;   /* 0 = empty slot */
+    uint8_t  flags;     /* LCC_CNSTFLAGS_* */
+} lcc_consist_entry_t;
 
 typedef struct lcc_train_state {
     uint16_t      dcc_address;
@@ -28,6 +38,7 @@ typedef struct lcc_train_state {
     bool          emergency;
     uint64_t      controller_owner;  /* 0 = unowned; otherwise controller node ID */
     uint64_t      pending_search_event;  /* deferred Producer Identified Valid until alias confirms */
+    lcc_consist_entry_t consist[LCC_MAX_CONSIST_SLAVES];
     /* Addressed-message reassembly for multi-frame traction commands
      * (ASSIGN CONTROLLER is 11 bytes, spans 2 CAN frames). Single
      * outstanding reassembly per train — concurrent senders race and
