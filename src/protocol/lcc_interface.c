@@ -157,6 +157,18 @@ static uint16_t config_read(lcc_node_t *node, uint32_t addr, uint16_t count,
     return count;
 }
 
+/* wavegen / motor globals live in main.c; declared extern here so
+ * config writes can apply dynamic changes (RailCom toggle, current
+ * limits) without waiting for a reboot. Host tests stub these. */
+extern wavegen_t wavegen;
+extern motor_t   motor_a;
+extern motor_t   motor_b;
+
+static bool config_range_touches(uint32_t addr, uint16_t count,
+                                 uint32_t field, uint32_t field_len) {
+    return addr < field + field_len && addr + count > field;
+}
+
 static uint16_t config_write(lcc_node_t *node, uint32_t addr, uint16_t count,
                              const uint8_t *in) {
     (void)node;
@@ -165,6 +177,24 @@ static uint16_t config_write(lcc_node_t *node, uint32_t addr, uint16_t count,
         count = (uint16_t)(CONFIG_MEM_SIZE - addr);
     memcpy(cs_config_mem + addr, in, count);
     mark_config_dirty();
+
+    /* Apply side effects for the fields with live-update semantics — the
+     * DCC-side handles re-check config on each operation, so only the
+     * hardware-touching fields need push updates. */
+    if (config_range_touches(addr, count, CONFIG_OFFSET_RAILCOM, 1)) {
+        bool enabled = cs_config_mem[CONFIG_OFFSET_RAILCOM] != 0;
+        uint8_t sig, pwr, brk, flt, adc;
+        lcc_interface_get_pins_main(&sig, &pwr, &brk, &flt, &adc);
+        wavegen_reinit(&wavegen,
+                       enabled ? WAVEGEN_NORMAL : WAVEGEN_NO_CUTOUT,
+                       sig, 2, brk);
+    }
+    if (config_range_touches(addr, count, CONFIG_OFFSET_MAIN_LIMIT, 2)) {
+        motor_set_current_limit_ma(&motor_a, lcc_interface_main_limit_ma());
+    }
+    if (config_range_touches(addr, count, CONFIG_OFFSET_PROG_LIMIT, 2)) {
+        motor_set_current_limit_ma(&motor_b, lcc_interface_prog_limit_ma());
+    }
     return count;
 }
 
