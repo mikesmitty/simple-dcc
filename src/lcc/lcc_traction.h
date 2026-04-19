@@ -9,22 +9,33 @@
 
 /*
  * Traction protocol handler. Routes addressed MTI 0x05EB sub-instructions
- * (SET_SPEED_DIRECTION, SET_FN, EMERGENCY_STOP, QUERY_SPEEDS, QUERY_FUNCTION)
- * onto a hooks table the glue layer fills in with dcc_*() callbacks. Per-train
- * state hangs off lcc_node_t.train.
+ * (SET_SPEED_DIRECTION, SET_FN, EMERGENCY_STOP, QUERY_SPEEDS, QUERY_FUNCTION,
+ * CONTROLLER_CONFIG) onto a hooks table the glue layer fills in with dcc_*()
+ * callbacks. Per-train state hangs off lcc_node_t.train.
  *
- * M5 scope: the five commands above. Multi-frame addressed payloads are
- * dropped (single-frame is enough for everything M5 handles). Controller /
- * Listener / Consist sub-instructions land in M6 / M8.
+ * M6 scope: the five M5 commands plus Controller Assign/Release/Query. The
+ * ASSIGN path "steals" an already-owned train without notifying the old
+ * owner, matching OpenMRN's current behaviour (TractionTrain.cxx:319).
+ * Listener / Consist land in M8.
  */
 
 typedef struct lcc_train_state {
     uint16_t      dcc_address;
     bool          is_long_address;
-    lcc_float16_t last_speed_f16;   /* echoed back by QUERY_SPEEDS */
-    uint64_t      fn_state;         /* F0..F63 bitmap */
-    uint8_t       fn_state_hi;      /* F64..F68 in bits 0..4 */
+    lcc_float16_t last_speed_f16;    /* echoed back by QUERY_SPEEDS */
+    uint64_t      fn_state;          /* F0..F63 bitmap */
+    uint8_t       fn_state_hi;       /* F64..F68 in bits 0..4 */
     bool          emergency;
+    uint64_t      controller_owner;  /* 0 = unowned; otherwise controller node ID */
+    uint64_t      pending_search_event;  /* deferred Producer Identified Valid until alias confirms */
+    /* Addressed-message reassembly for multi-frame traction commands
+     * (ASSIGN CONTROLLER is 11 bytes, spans 2 CAN frames). Single
+     * outstanding reassembly per train — concurrent senders race and
+     * the losing partial is discarded. */
+    uint8_t       rx_buf[32];
+    uint8_t       rx_len;
+    uint16_t      rx_src;
+    bool          rx_active;
 } lcc_train_state_t;
 
 typedef struct {

@@ -84,9 +84,24 @@
 #define LCC_TRAC_EMERGENCY_STOP   0x02  /* no payload */
 #define LCC_TRAC_QUERY_SPEEDS     0x10  /* reply: set/commanded/actual f16 + status */
 #define LCC_TRAC_QUERY_FUNCTION   0x11  /* + 3-byte fn-addr; reply: addr + value */
-#define LCC_TRAC_CONTROLLER_CFG   0x20  /* M6 */
+#define LCC_TRAC_CONTROLLER_CFG   0x20  /* + sub-opcode LCC_CTRLREQ_* */
 #define LCC_TRAC_LISTENER_CFG     0x30  /* M8 */
 #define LCC_TRAC_CONSIST_CFG      0x40  /* M8 */
+
+/* Traction Controller Config sub-opcodes (payload byte 1 after 0x20).
+ * Reference: OpenMRN TractionDefs.hxx CTRLREQ_*. */
+#define LCC_CTRLREQ_ASSIGN              0x01  /* + flags + 6-byte node ID (+ 2-byte alias if flag 0x01) */
+#define LCC_CTRLREQ_RELEASE             0x02  /* + flags + 6-byte node ID (+ 2-byte alias if flag 0x01) */
+#define LCC_CTRLREQ_QUERY               0x03  /* no payload */
+#define LCC_CTRLREQ_NOTIFY_CHANGED      0x04  /* sent *by* train, not received */
+
+/* Flags byte (payload[2]) for ASSIGN / RELEASE / QUERY reply */
+#define LCC_CTRLFLAG_ALIAS_PRESENT      0x01
+
+/* ASSIGN reply error codes (payload[2] of the response) */
+#define LCC_CTRLRESP_OK                 0x00
+#define LCC_CTRLRESP_ERR_CONTROLLER     0x01  /* assign refused — controller mismatch */
+#define LCC_CTRLRESP_ERR_TRAIN          0x02  /* assign refused — train unavailable */
 
 /* DCC short-vs-long address split: addresses 1..127 are "short", 128+ "long".
  * Throttles encode this in the train search flags but the CS still has to
@@ -143,15 +158,21 @@
 #define LCC_SPACE_ACDI_MFG   0xFC
 #define LCC_SPACE_ACDI_USER  0xFB
 
-/* Train Search Protocol event prefix (matches OpenMRN TrainSearch event) */
+/* Train Search Protocol event prefix (OpenLCB S-9.7.0.2). Upper 32 bits are
+ * fixed; lower 32 bits pack 6 decimal-digit nibbles (bits 31..8) followed by
+ * an 8-bit flag byte. Digit nibble 0xF is padding, 0..9 is a BCD digit. */
 #define LCC_EVENT_TRAIN_SEARCH_PREFIX  0x090099FF00000000ULL
 #define LCC_EVENT_TRAIN_SEARCH_MASK    0xFFFFFFFF00000000ULL
 
-/* Train Search protocol flags (low byte of event ID) */
+/* Train Search flag byte (low 8 bits of the event ID).
+ * Bits 7..4: action flags. Bit 4 is reserved (must be 0) per spec.
+ * Bits 3..0: protocol selector. 0x08 = DCC; with 0x04 = long address. */
 #define LCC_TRAIN_SEARCH_FLAG_ALLOCATE  0x80
 #define LCC_TRAIN_SEARCH_FLAG_EXACT     0x40
-#define LCC_TRAIN_SEARCH_FLAG_MATCH_ANY 0x20
-#define LCC_TRAIN_SEARCH_FLAG_ADDR_ONLY 0x10
+#define LCC_TRAIN_SEARCH_FLAG_ADDR_ONLY 0x20
+#define LCC_TRAIN_SEARCH_FLAG_DCC       0x08
+#define LCC_TRAIN_SEARCH_FLAG_LONG_ADDR 0x04
+#define LCC_TRAIN_SEARCH_FLAG_RESERVED  0x10
 
 /* Well-known emergency events */
 #define LCC_EVENT_EMERGENCY_OFF   0x010000000000FFFFULL

@@ -82,6 +82,7 @@ add_library(lcc STATIC
     src/lcc/lcc_events.c
     src/lcc/lcc_float16.c
     src/lcc/lcc_traction.c
+    src/lcc/lcc_train_search.c
     ${CMAKE_CURRENT_BINARY_DIR}/cdi_data.c
 )
 target_include_directories(lcc PUBLIC

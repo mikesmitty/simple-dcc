@@ -11,6 +11,7 @@
 #include "lcc/lcc_memconfig.h"
 #include "lcc/lcc_events.h"
 #include "lcc/lcc_traction.h"
+#include "lcc/lcc_train_search.h"
 #include "cdi_data.h"
 
 #include "FreeRTOS.h"
@@ -55,13 +56,15 @@ static const lcc_snip_t g_cs_snip = {
     .user_desc  = NULL,
 };
 
-// --- M5 hard-coded test train ---
-// One DCC-proxy train node so JMRI can drive a real loco end-to-end. The
-// auto-create-on-search flow lands in M7; until then, throttles bind to
-// this node by its node ID (06.01.00.00.00.<addr>).
-#define M5_TEST_TRAIN_DCC_ADDR  3
-static lcc_node_t        g_train_node;
-static lcc_train_state_t g_train_state;
+// --- Train node pool (M7 dynamic allocation) ---
+// DCC-proxy train nodes are spawned on demand by the Train Search allocator.
+// The CS occupies one slot in the lcc_node registry, so the pool caps at
+// LCC_MAX_NODES - 1. Storage is static: no malloc anywhere in the stack.
+#define LCC_TRAIN_POOL_SIZE      (LCC_MAX_NODES - 1)
+static lcc_node_t        g_train_nodes [LCC_TRAIN_POOL_SIZE];
+static lcc_train_state_t g_train_states[LCC_TRAIN_POOL_SIZE];
+static bool              g_train_used  [LCC_TRAIN_POOL_SIZE];
+
 static const lcc_snip_t  g_train_snip = {
     .mfg_name   = "simple-dcc",
     .model_name = "DCC Train Proxy",
@@ -376,6 +379,65 @@ static const lcc_traction_hooks_t g_traction_hooks = {
     .emergency_stop = traction_emergency_stop,
 };
 
+// --- Train pool allocator (M7) -----------------------------------------
+// Called by the Train Search dispatcher when a throttle's ALLOCATE query
+// fails to match any registered train. Pick the first free pool slot,
+// initialize the train state, register the node, and stash event_id so
+// PRODUCER_IDENTIFIED_VALID can fire once the alias confirms.
+
+static lcc_node_t *train_find_by_addr(uint16_t addr) {
+    for (int i = 0; i < LCC_TRAIN_POOL_SIZE; i++) {
+        if (g_train_used[i] && g_train_states[i].dcc_address == addr)
+            return &g_train_nodes[i];
+    }
+    return NULL;
+}
+
+static lcc_node_t *train_allocator(uint16_t dcc_addr, uint8_t flags,
+                                   uint64_t event_id) {
+    /* Idempotent on repeat ALLOCATE: JMRI sometimes re-sends the search
+     * during reconnect, and we'd lose the existing owner mapping if we
+     * clobbered the state with a fresh init. */
+    lcc_node_t *existing = train_find_by_addr(dcc_addr);
+    if (existing) {
+        if (existing->train &&
+            existing->alias_state != LCC_A_CONFIRMED &&
+            existing->train->pending_search_event == 0) {
+            existing->train->pending_search_event = event_id;
+        }
+        return existing;
+    }
+
+    int slot = -1;
+    for (int i = 0; i < LCC_TRAIN_POOL_SIZE; i++) {
+        if (!g_train_used[i]) { slot = i; break; }
+    }
+    if (slot < 0) return NULL;
+
+    bool is_long = (flags & LCC_TRAIN_SEARCH_FLAG_LONG_ADDR)
+                || (dcc_addr > LCC_DCC_SHORT_ADDR_MAX);
+    lcc_train_state_init(&g_train_states[slot], dcc_addr, is_long);
+    g_train_states[slot].pending_search_event = event_id;
+
+    lcc_node_t *node = &g_train_nodes[slot];
+    lcc_node_init(node, g_train_node_id_base | (uint64_t)dcc_addr,
+                  LCC_ROLE_TRAIN);
+    node->snip     = &g_train_snip;
+    node->pip_bits = LCC_PIP_SIMPLE_PROTOCOL
+                   | LCC_PIP_EVENT_EXCHANGE
+                   | LCC_PIP_SIMPLE_NODE_INFO
+                   | LCC_PIP_TRAIN_CONTROL;
+    node->train    = &g_train_states[slot];
+
+    if (!lcc_node_register(node))
+        return NULL;
+
+    g_train_used[slot] = true;
+    if (g_dcc_engine)
+        dcc_ensure_loco(g_dcc_engine, dcc_addr);
+    return node;
+}
+
 // --- Emergency event handling -----------------------------------------
 
 static void handle_emergency_event(lcc_node_t *node, uint64_t event_id) {
@@ -436,22 +498,14 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
                        | LCC_PIP_CDI;
     lcc_node_register(&g_cs_node);
 
-    /* M5 hard-coded test train. Auto-create-on-search arrives in M7. */
+    /* Traction DCC bridge + Train Search auto-allocation. Pool entries
+     * start empty; JMRI opening a throttle on address N triggers the
+     * allocator, which registers node 06.01.00.00.XX.XX for that DCC
+     * address and defers PRODUCER_IDENTIFIED_VALID until the alias
+     * state machine confirms. */
     lcc_traction_set_hooks(&g_traction_hooks);
-    lcc_train_state_init(&g_train_state, M5_TEST_TRAIN_DCC_ADDR,
-                         M5_TEST_TRAIN_DCC_ADDR > LCC_DCC_SHORT_ADDR_MAX);
-    lcc_node_init(&g_train_node,
-                  g_train_node_id_base | (uint64_t)M5_TEST_TRAIN_DCC_ADDR,
-                  LCC_ROLE_TRAIN);
-    g_train_node.snip     = &g_train_snip;
-    g_train_node.pip_bits = LCC_PIP_SIMPLE_PROTOCOL
-                          | LCC_PIP_EVENT_EXCHANGE
-                          | LCC_PIP_SIMPLE_NODE_INFO
-                          | LCC_PIP_TRAIN_CONTROL;
-    g_train_node.train    = &g_train_state;
-    lcc_node_register(&g_train_node);
-    if (g_dcc_engine)
-        dcc_ensure_loco(g_dcc_engine, M5_TEST_TRAIN_DCC_ADDR);
+    memset(g_train_used, 0, sizeof(g_train_used));
+    lcc_train_search_set_allocator(train_allocator);
 
     /* Memory-config spaces — CDI size is computed from the generated
      * _cdi_data's NUL terminator (strlen gives XML byte count). */

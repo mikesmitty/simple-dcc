@@ -87,11 +87,16 @@ void vApplicationGetTimerTaskMemory(StaticTask_t **ppxTimerTaskTCBBuffer,
     *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH * 2;
 }
 
+#ifndef LCC_SW_VERSION
+#define LCC_SW_VERSION "dev"
+#endif
+
 int main(void) {
     stdio_init_all();
     // Ensure terminals are ready
     // sleep_ms(2000);
-    printf("\n[INIT] starting simple-dcc\n");
+    printf("\n[INIT] starting simple-dcc %s (built " __DATE__ " " __TIME__ ")\n",
+           LCC_SW_VERSION);
 
     // Load configuration FIRST so hardware init can use it
     lcc_interface_load_config();

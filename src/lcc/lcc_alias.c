@@ -55,6 +55,13 @@ static void emit_claim_and_init(const lcc_node_t *node)
     lcc_node_send_global(node, LCC_MTI_INITIALIZATION_COMPLETE, nid, 6);
 }
 
+void lcc_alias_reannounce(const lcc_node_t *node)
+{
+    if (node->alias_state != LCC_A_CONFIRMED)
+        return;
+    emit_claim_and_init(node);
+}
+
 void lcc_alias_tick(lcc_node_t *node)
 {
     switch (node->alias_state) {

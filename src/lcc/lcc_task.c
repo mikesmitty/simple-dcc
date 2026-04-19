@@ -4,6 +4,8 @@
 #include "lcc/lcc_node.h"
 #include "lcc/lcc_alias.h"
 #include "lcc/lcc_events.h"
+#include "lcc/lcc_train_search.h"
+#include "serial/serial.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -30,10 +32,23 @@ static void alias_tick_all(void)
     }
 }
 
+/* USB CDC disconnect→connect edge: re-announce every confirmed node so
+ * the host picks up aliases that were claimed before it was listening. */
+static void reannounce_all_confirmed(void)
+{
+    int n = lcc_node_count();
+    for (int i = 0; i < n; i++) {
+        lcc_node_t *node = lcc_node_at(i);
+        if (node && node->alias_state == LCC_A_CONFIRMED)
+            lcc_alias_reannounce(node);
+    }
+}
+
 void lcc_task_run(void)
 {
     TickType_t next_tick = xTaskGetTickCount();
     lcc_frame_t frame;
+    bool prev_connected = false;
 
     for (;;) {
         /* Wait for either an RX frame or the next alias-tick deadline,
@@ -48,7 +63,13 @@ void lcc_task_run(void)
 
         now = xTaskGetTickCount();
         if ((int32_t)(now - next_tick) >= 0) {
+            bool connected = serial_write_ready();
+            if (connected && !prev_connected)
+                reannounce_all_confirmed();
+            prev_connected = connected;
+
             alias_tick_all();
+            lcc_train_search_flush_pending();
             next_tick += pdMS_TO_TICKS(TICK_PERIOD_MS);
         }
     }

@@ -2,6 +2,7 @@
 #include "lcc/lcc_gc.h"
 #include "lcc/lcc_defs.h"
 #include "lcc/lcc_node.h"
+#include "lcc/lcc_train_search.h"
 #include "serial/serial.h"
 
 #include "FreeRTOS.h"
@@ -92,7 +93,21 @@ void lcc_if_dispatch(const lcc_frame_t *frame)
             if (n)
                 lcc_node_handle_frame(n, frame);
         } else {
-            /* Global — deliver to every confirmed node. */
+            /* Global — deliver to every confirmed node. Train Search
+             * runs once per EVENT_REPORT frame (not per node) since
+             * the registry walk lives inside the train-search module. */
+            if (mti == LCC_MTI_EVENT_REPORT && frame->dlc >= 8) {
+                uint64_t ev = lcc_event_from_buf(frame->data);
+                lcc_train_search_dispatch(lcc_get_src(frame->id), ev);
+            }
+            /* VNI Global with a filter for a DCC-proxy node ID — JMRI's
+             * throttle probes trains this way before it'll issue a Train
+             * Search. Auto-allocate so the alias claim's AMD makes the
+             * train visible. */
+            if (mti == LCC_MTI_VERIFY_NODE_ID_GLOBAL && frame->dlc == 6) {
+                uint64_t target = lcc_node_id_from_buf(frame->data);
+                lcc_train_search_ensure_by_node_id(target);
+            }
             for (int i = 0; i < count; i++)
                 lcc_node_handle_frame(lcc_node_at(i), frame);
         }

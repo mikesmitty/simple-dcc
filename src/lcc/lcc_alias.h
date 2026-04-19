@@ -29,4 +29,10 @@ void lcc_alias_tick(lcc_node_t *node);
  * CONFIRMED). */
 void lcc_alias_on_collision(lcc_node_t *node);
 
+/* Re-emit RID + AMD + INITIALIZATION_COMPLETE for a CONFIRMED node.
+ * Used after the USB CDC link comes up mid-session so the host sees our
+ * node-alias mapping without having to AME-probe. No-op if the node
+ * hasn't reached CONFIRMED yet (the tick loop will emit naturally). */
+void lcc_alias_reannounce(const lcc_node_t *node);
+
 #endif /* LCC_ALIAS_H */
