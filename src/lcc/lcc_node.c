@@ -4,6 +4,8 @@
 #include "lcc/lcc_alias.h"
 #include "lcc/lcc_pip.h"
 #include "lcc/lcc_snip.h"
+#include "lcc/lcc_datagram.h"
+#include "lcc/lcc_events.h"
 
 #include <string.h>
 
@@ -174,8 +176,14 @@ void lcc_node_handle_frame(lcc_node_t *node, const lcc_frame_t *frame)
         return;
 
     uint8_t ftype = lcc_get_can_frame_type(frame->id);
+
+    if (ftype >= LCC_FRAME_DATAGRAM_ONE && ftype <= LCC_FRAME_DATAGRAM_FINAL) {
+        lcc_datagram_handle_frame(node, frame);
+        return;
+    }
+
     if (ftype != LCC_FRAME_GLOBAL_ADDRESSED)
-        return;  /* datagrams handled in M4 */
+        return;
 
     uint16_t mti = lcc_get_mti(frame->id);
 
@@ -196,9 +204,15 @@ void lcc_node_handle_frame(lcc_node_t *node, const lcc_frame_t *frame)
     case LCC_MTI_IDENT_INFO_REQUEST:
         lcc_snip_handle(node, frame);
         break;
+    case LCC_MTI_EVENTS_IDENTIFY_GLOBAL:
+    case LCC_MTI_EVENTS_IDENTIFY_ADDRESSED:
+    case LCC_MTI_CONSUMER_IDENTIFY:
+    case LCC_MTI_PRODUCER_IDENTIFY:
+    case LCC_MTI_EVENT_REPORT:
+        lcc_events_handle_frame(node, frame);
+        break;
     default:
-        /* Events, traction, datagrams arrive in M4+. Silently drop so
-         * the bus stays quiet until those handlers land. */
+        /* Traction lands in M5+; other MTIs are silently dropped. */
         break;
     }
 }

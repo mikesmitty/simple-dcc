@@ -8,12 +8,16 @@
 #include "lcc/lcc_node.h"
 #include "lcc/lcc_snip.h"
 #include "lcc/lcc_defs.h"
+#include "lcc/lcc_memconfig.h"
+#include "lcc/lcc_events.h"
+#include "cdi_data.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
 #include "timers.h"
 
 #include "pico/unique_id.h"
+#include "hardware/watchdog.h"
 #include "util/dbg.h"
 #include <string.h>
 
@@ -37,9 +41,9 @@ static TimerHandle_t flash_flush_timer;
 static uint64_t g_train_node_id_base;
 
 // --- Command-station LCC node ---
-// Exposed on the GridConnect bus via lcc_node_register. The SNIP user
-// fields stay NULL until M4 wires ACDI (config space 0xFB) into the
-// reply path — the handler emits empty strings for NULL fields.
+// The CS is the single OpenLCB node exposed by M4; PIP advertises the
+// full protocol set so JMRI treats it as a command station. SNIP user
+// fields come from cs_config_mem via the ACDI 0xFB projection.
 static lcc_node_t g_cs_node;
 static const lcc_snip_t g_cs_snip = {
     .mfg_name   = "simple-dcc",
@@ -85,6 +89,12 @@ static void config_mem_init_defaults(void) {
     cs_config_mem[CONFIG_OFFSET_PINS_PROG+4] = ADC_CHANNEL_B;
 }
 
+static void mark_config_dirty(void) {
+    __atomic_store_n(&cs_config_dirty, true, __ATOMIC_SEQ_CST);
+    if (flash_flush_timer)
+        xTimerStart(flash_flush_timer, 0);
+}
+
 static void flash_flush_timer_callback(TimerHandle_t timer) {
     (void)timer;
     if (__atomic_load_n(&cs_config_dirty, __ATOMIC_SEQ_CST)) {
@@ -95,6 +105,162 @@ static void flash_flush_timer_callback(TimerHandle_t timer) {
             DBG("[NV] ERROR: flash flush failed\n");
         }
     }
+}
+
+// --- Memory-space backing stores --------------------------------------
+
+/* CDI (0xFF). The generated _cdi_data is NUL-terminated XML; the highest
+ * valid address is therefore one byte short of the NUL. strlen() gives
+ * that length at runtime — sizeof() cannot be used on the extern. */
+static uint32_t g_cdi_size;
+
+static uint16_t cdi_read(lcc_node_t *node, uint32_t addr, uint16_t count,
+                         uint8_t *out) {
+    (void)node;
+    if (addr >= g_cdi_size) return 0;
+    if ((uint32_t)addr + count > g_cdi_size)
+        count = (uint16_t)(g_cdi_size - addr);
+    memcpy(out, _cdi_data + addr, count);
+    return count;
+}
+
+/* CONFIG (0xFD). Direct view of cs_config_mem. Writes mark dirty and
+ * kick the flash flush timer; UPDATE_COMPLETE forces an immediate flush
+ * via the same mechanism. */
+static uint16_t config_read(lcc_node_t *node, uint32_t addr, uint16_t count,
+                            uint8_t *out) {
+    (void)node;
+    if (addr >= CONFIG_MEM_SIZE) return 0;
+    if ((uint32_t)addr + count > CONFIG_MEM_SIZE)
+        count = (uint16_t)(CONFIG_MEM_SIZE - addr);
+    memcpy(out, cs_config_mem + addr, count);
+    return count;
+}
+
+static uint16_t config_write(lcc_node_t *node, uint32_t addr, uint16_t count,
+                             const uint8_t *in) {
+    (void)node;
+    if (addr >= CONFIG_MEM_SIZE) return 0;
+    if ((uint32_t)addr + count > CONFIG_MEM_SIZE)
+        count = (uint16_t)(CONFIG_MEM_SIZE - addr);
+    memcpy(cs_config_mem + addr, in, count);
+    mark_config_dirty();
+    return count;
+}
+
+static void config_update_complete(lcc_node_t *node) {
+    (void)node;
+    /* Force an early flush so JMRI "Save" round-trips within a few
+     * seconds instead of the normal 2s debounce. */
+    if (__atomic_load_n(&cs_config_dirty, __ATOMIC_SEQ_CST)) {
+        xTimerChangePeriod(flash_flush_timer, pdMS_TO_TICKS(100), 0);
+    }
+}
+
+/* ACDI user (0xFB) — 128 bytes total:
+ *   byte 0    : version = 2 (fixed)
+ *   bytes 1..63 : user name    (projected from cs_config_mem[0..62])
+ *   bytes 64..127 : user desc  (projected from cs_config_mem[63..126])
+ * Writes land in cs_config_mem at the projected offsets and dirty the
+ * backing store the same as a direct 0xFD write. */
+#define ACDI_USER_SIZE     128
+#define ACDI_USER_VERSION  2
+
+static uint16_t acdi_user_read(lcc_node_t *node, uint32_t addr, uint16_t count,
+                               uint8_t *out) {
+    (void)node;
+    if (addr >= ACDI_USER_SIZE) return 0;
+    if ((uint32_t)addr + count > ACDI_USER_SIZE)
+        count = (uint16_t)(ACDI_USER_SIZE - addr);
+    for (uint16_t i = 0; i < count; i++) {
+        uint32_t a = addr + i;
+        out[i] = (a == 0) ? ACDI_USER_VERSION : cs_config_mem[a - 1];
+    }
+    return count;
+}
+
+static uint16_t acdi_user_write(lcc_node_t *node, uint32_t addr, uint16_t count,
+                                const uint8_t *in) {
+    (void)node;
+    if (addr >= ACDI_USER_SIZE) return 0;
+    if ((uint32_t)addr + count > ACDI_USER_SIZE)
+        count = (uint16_t)(ACDI_USER_SIZE - addr);
+    bool wrote = false;
+    for (uint16_t i = 0; i < count; i++) {
+        uint32_t a = addr + i;
+        if (a == 0) continue;  /* version byte is read-only */
+        cs_config_mem[a - 1] = in[i];
+        wrote = true;
+    }
+    if (wrote) mark_config_dirty();
+    return count;
+}
+
+/* ACDI mfg (0xFC) — 125-byte static layout per ACDI S&TN v1:
+ *   byte 0       : version = 1
+ *   bytes 1..41  : Manufacturer name (41 bytes, NUL-padded)
+ *   bytes 42..82 : Node type        (41 bytes)
+ *   bytes 83..103: Hardware version (21 bytes)
+ *   bytes 104..124: Software version (21 bytes) */
+#define ACDI_MFG_SIZE     125
+#define ACDI_MFG_VERSION  1
+static uint8_t g_acdi_mfg[ACDI_MFG_SIZE];
+
+static void acdi_mfg_init(void) {
+    memset(g_acdi_mfg, 0, sizeof(g_acdi_mfg));
+    g_acdi_mfg[0] = ACDI_MFG_VERSION;
+    /* strncpy-style fill: truncate on overflow, pad remainder with 0. */
+    size_t n;
+    n = strlen(g_cs_snip.mfg_name);   if (n > 41) n = 41;
+    memcpy(&g_acdi_mfg[1], g_cs_snip.mfg_name, n);
+    n = strlen(g_cs_snip.model_name); if (n > 41) n = 41;
+    memcpy(&g_acdi_mfg[42], g_cs_snip.model_name, n);
+    n = strlen(g_cs_snip.hw_version); if (n > 21) n = 21;
+    memcpy(&g_acdi_mfg[83], g_cs_snip.hw_version, n);
+    n = strlen(g_cs_snip.sw_version); if (n > 21) n = 21;
+    memcpy(&g_acdi_mfg[104], g_cs_snip.sw_version, n);
+}
+
+static uint16_t acdi_mfg_read(lcc_node_t *node, uint32_t addr, uint16_t count,
+                              uint8_t *out) {
+    (void)node;
+    if (addr >= ACDI_MFG_SIZE) return 0;
+    if ((uint32_t)addr + count > ACDI_MFG_SIZE)
+        count = (uint16_t)(ACDI_MFG_SIZE - addr);
+    memcpy(out, g_acdi_mfg + addr, count);
+    return count;
+}
+
+/* Space registration table — fed to lcc_memconfig_register_spaces() once. */
+static const lcc_memspace_handler_t g_spaces[] = {
+    { LCC_SPACE_CDI,       0,                 true,  cdi_read,       NULL,             NULL                    },
+    { LCC_SPACE_CONFIG,    CONFIG_MEM_SIZE,   false, config_read,    config_write,     config_update_complete  },
+    { LCC_SPACE_ACDI_MFG,  ACDI_MFG_SIZE,     true,  acdi_mfg_read,  NULL,             NULL                    },
+    { LCC_SPACE_ACDI_USER, ACDI_USER_SIZE,    false, acdi_user_read, acdi_user_write,  config_update_complete  },
+};
+
+/* CDI size is only known at runtime — patch it in after the table is
+ * registered. The memconfig module holds the table by pointer, so
+ * mutating it in place is safe. */
+static lcc_memspace_handler_t g_spaces_rw[sizeof(g_spaces) / sizeof(g_spaces[0])];
+
+/* Reboot + factory-reset hooks for memconfig 0xA9 / 0xAA. */
+static void memcfg_reboot_hook(void) {
+    /* Small delay to let the OK datagram flush over USB CDC before the
+     * chip resets. flash_flush timer not flushed here — if the user
+     * intended to save, UPDATE_COMPLETE should have already fired. */
+    vTaskDelay(pdMS_TO_TICKS(100));
+    watchdog_reboot(0, 0, 0);
+}
+
+static void memcfg_factory_reset_hook(lcc_node_t *node) {
+    (void)node;
+    config_mem_init_defaults();
+    __atomic_store_n(&cs_config_dirty, true, __ATOMIC_SEQ_CST);
+    /* Synchronous flush before reboot so the defaults survive. */
+    flash_flush_timer_callback(NULL);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    watchdog_reboot(0, 0, 0);
 }
 
 // --- Node ID from hardware ---
@@ -173,6 +339,31 @@ void lcc_interface_load_config(void) {
     }
 }
 
+// --- Emergency event handling -----------------------------------------
+
+static void handle_emergency_event(lcc_node_t *node, uint64_t event_id) {
+    (void)node;
+    switch (event_id) {
+    case LCC_EVENT_EMERGENCY_OFF:
+        DBG("[LCC] EMERGENCY_OFF: cutting track power\n");
+        if (g_track_main) track_set_power(g_track_main, false);
+        break;
+    case LCC_EVENT_CLEAR_EMERG_OFF:
+        DBG("[LCC] CLEAR_EMERG_OFF: restoring track power\n");
+        if (g_track_main) track_set_power(g_track_main, true);
+        break;
+    case LCC_EVENT_EMERGENCY_STOP:
+        DBG("[LCC] EMERGENCY_STOP: all-loco estop\n");
+        if (g_dcc_engine) dcc_emergency_stop_all(g_dcc_engine);
+        break;
+    case LCC_EVENT_CLEAR_EMERG_STOP:
+        /* No protocol-level action — throttles re-send speed as needed. */
+        break;
+    default:
+        break;
+    }
+}
+
 void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_input) {
     (void)pqueue_input;
 
@@ -194,15 +385,41 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
 
     lcc_task_init();
 
-    /* Build and register the CS node. M3 advertises the minimum protocol
-     * set that JMRI needs to show the node: SNIP + PIP + identification.
-     * Memory-config + event-exchange advertisements come in M4/M5. */
+    /* Build and register the CS node. M4 advertises DATAGRAM +
+     * MEMORY_CONFIG + EVENT_EXCHANGE + CDI + ABBREVIATED_CDI so JMRI
+     * exposes the full configuration surface. Traction protocol adds in
+     * M5 via an additional PIP bit. */
     lcc_node_init(&g_cs_node, get_unique_node_id(), LCC_ROLE_CS);
     g_cs_node.snip     = &g_cs_snip;
     g_cs_node.pip_bits = LCC_PIP_SIMPLE_PROTOCOL
+                       | LCC_PIP_DATAGRAM
+                       | LCC_PIP_MEMORY_CONFIG
+                       | LCC_PIP_EVENT_EXCHANGE
                        | LCC_PIP_IDENTIFICATION
-                       | LCC_PIP_SIMPLE_NODE_INFO;
+                       | LCC_PIP_ABBREVIATED_CDI
+                       | LCC_PIP_SIMPLE_NODE_INFO
+                       | LCC_PIP_CDI;
     lcc_node_register(&g_cs_node);
+
+    /* Memory-config spaces — CDI size is computed from the generated
+     * _cdi_data's NUL terminator (strlen gives XML byte count). */
+    g_cdi_size = (uint32_t)strlen((const char *)_cdi_data);
+    memcpy(g_spaces_rw, g_spaces, sizeof(g_spaces));
+    g_spaces_rw[0].size = g_cdi_size;  /* entry 0 is LCC_SPACE_CDI */
+    acdi_mfg_init();
+    lcc_memconfig_register_spaces(g_spaces_rw,
+        (uint8_t)(sizeof(g_spaces_rw) / sizeof(g_spaces_rw[0])));
+    lcc_memconfig_set_hooks(memcfg_reboot_hook, memcfg_factory_reset_hook);
+
+    /* Emergency event consumers (well-known OpenLCB events). */
+    lcc_events_register(&g_cs_node, LCC_EVENT_EMERGENCY_OFF,
+                        LCC_EVENT_CONSUMER, handle_emergency_event);
+    lcc_events_register(&g_cs_node, LCC_EVENT_CLEAR_EMERG_OFF,
+                        LCC_EVENT_CONSUMER, handle_emergency_event);
+    lcc_events_register(&g_cs_node, LCC_EVENT_EMERGENCY_STOP,
+                        LCC_EVENT_CONSUMER, handle_emergency_event);
+    lcc_events_register(&g_cs_node, LCC_EVENT_CLEAR_EMERG_STOP,
+                        LCC_EVENT_CONSUMER, handle_emergency_event);
 }
 
 void task_protocol(void *params) {

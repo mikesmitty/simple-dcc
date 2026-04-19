@@ -3,6 +3,7 @@
 #include "lcc/lcc_frame.h"
 #include "lcc/lcc_node.h"
 #include "lcc/lcc_alias.h"
+#include "lcc/lcc_events.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -13,6 +14,7 @@ void lcc_task_init(void)
 {
     lcc_if_init();
     lcc_node_registry_reset();
+    lcc_events_reset();
     /* The CS node (and later train nodes) are registered by the glue
      * layer in src/protocol/lcc_interface.c so the LCC core stays free
      * of DCC-specific config. */

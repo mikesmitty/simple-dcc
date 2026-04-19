@@ -77,6 +77,10 @@ add_library(lcc STATIC
     src/lcc/lcc_alias.c
     src/lcc/lcc_pip.c
     src/lcc/lcc_snip.c
+    src/lcc/lcc_datagram.c
+    src/lcc/lcc_memconfig.c
+    src/lcc/lcc_events.c
+    ${CMAKE_CURRENT_BINARY_DIR}/cdi_data.c
 )
 target_include_directories(lcc PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}/src
