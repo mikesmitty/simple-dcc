@@ -5,6 +5,9 @@
 #include "wavegen/wavegen.h"
 #include "motor/motor.h"
 #include "lcc/lcc_task.h"
+#include "lcc/lcc_node.h"
+#include "lcc/lcc_snip.h"
+#include "lcc/lcc_defs.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -14,6 +17,16 @@
 #include "util/dbg.h"
 #include <string.h>
 
+/* Release-please patches the literal below on each release. CI builds
+ * override it via a compile-time define (derived from `git describe`),
+ * so development binaries carry the git-sha suffix while tagged
+ * releases report the tag verbatim. */
+#ifndef LCC_SW_VERSION
+// x-release-please-start-version
+#define LCC_SW_VERSION "0.4.0"
+// x-release-please-end
+#endif
+
 dcc_engine_t *g_dcc_engine;
 static track_t *g_track_main;
 // Flag accessed from multiple tasks and the timer task. SMP-safe via __atomic_*.
@@ -22,6 +35,20 @@ static TimerHandle_t flash_flush_timer;
 
 // Train node ID base derived from hardware (0x060100000000 proxy prefix)
 static uint64_t g_train_node_id_base;
+
+// --- Command-station LCC node ---
+// Exposed on the GridConnect bus via lcc_node_register. The SNIP user
+// fields stay NULL until M4 wires ACDI (config space 0xFB) into the
+// reply path — the handler emits empty strings for NULL fields.
+static lcc_node_t g_cs_node;
+static const lcc_snip_t g_cs_snip = {
+    .mfg_name   = "simple-dcc",
+    .model_name = "DCC Command Station",
+    .hw_version = "RP2350",
+    .sw_version = LCC_SW_VERSION,
+    .user_name  = NULL,
+    .user_desc  = NULL,
+};
 
 // --- Configuration memory (RAM-backed with Flash persistence, space 0xFD) ---
 
@@ -165,9 +192,17 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
     // discoverable by DCC address.
     g_train_node_id_base = 0x060100000000ULL;
 
-    (void)get_unique_node_id;  // will be used once the new stack wires the CS node
-
     lcc_task_init();
+
+    /* Build and register the CS node. M3 advertises the minimum protocol
+     * set that JMRI needs to show the node: SNIP + PIP + identification.
+     * Memory-config + event-exchange advertisements come in M4/M5. */
+    lcc_node_init(&g_cs_node, get_unique_node_id(), LCC_ROLE_CS);
+    g_cs_node.snip     = &g_cs_snip;
+    g_cs_node.pip_bits = LCC_PIP_SIMPLE_PROTOCOL
+                       | LCC_PIP_IDENTIFICATION
+                       | LCC_PIP_SIMPLE_NODE_INFO;
+    lcc_node_register(&g_cs_node);
 }
 
 void task_protocol(void *params) {

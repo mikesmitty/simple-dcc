@@ -36,6 +36,29 @@ set(CMAKE_CXX_STANDARD 17)
 
 pico_sdk_init()
 
+# --- Version string (release-please + git-describe) ---
+# x-release-please-start-version
+set(PROJECT_VERSION_BASE "0.4.0")
+# x-release-please-end
+
+execute_process(
+    COMMAND git describe --tags --always --dirty
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    OUTPUT_VARIABLE GIT_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+
+# If git describe returned only a hash (shallow clone / untagged),
+# prepend the base version so SNIP doesn't advertise a bare sha.
+if (GIT_VERSION MATCHES "^[0-9a-f]+(-dirty)?$")
+    set(GIT_VERSION "${PROJECT_VERSION_BASE}-${GIT_VERSION}")
+endif()
+
+if (NOT GIT_VERSION)
+    set(GIT_VERSION "${PROJECT_VERSION_BASE}-unknown")
+endif()
+
 # --- CDI XML → C byte array ---
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cdi_data.c ${CMAKE_CURRENT_BINARY_DIR}/cdi_data.h
@@ -50,6 +73,10 @@ add_library(lcc STATIC
     src/lcc/lcc_gc.c
     src/lcc/lcc_if.c
     src/lcc/lcc_task.c
+    src/lcc/lcc_node.c
+    src/lcc/lcc_alias.c
+    src/lcc/lcc_pip.c
+    src/lcc/lcc_snip.c
 )
 target_include_directories(lcc PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}/src
@@ -112,7 +139,11 @@ target_compile_definitions(simple-dcc PRIVATE
     PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=2000
     USBD_MANUFACTURER="simple-dcc"
     USBD_PRODUCT="DCC Command Station"
+    LCC_SW_VERSION="${GIT_VERSION}"
 )
+
+pico_set_program_name(simple-dcc "simple-dcc")
+pico_set_program_version(simple-dcc "${GIT_VERSION}")
 
 # Generate UF2/BIN/HEX outputs
 pico_add_extra_outputs(simple-dcc)

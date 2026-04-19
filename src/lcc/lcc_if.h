@@ -44,4 +44,12 @@ bool lcc_if_tx(const lcc_frame_t *frame);
 void lcc_if_alias_lock(void);
 void lcc_if_alias_unlock(void);
 
+/* Fan a single RX frame out to the registered nodes based on frame type:
+ * - Control frames → every node (for collision detection + AME reply).
+ * - Global OpenLCB frames → every node.
+ * - Addressed OpenLCB frames → the node whose alias matches the dst.
+ * - Datagram frames → the node whose alias matches the datagram dst.
+ * Intended to run in lcc_task context. */
+void lcc_if_dispatch(const lcc_frame_t *frame);
+
 #endif /* LCC_IF_H */

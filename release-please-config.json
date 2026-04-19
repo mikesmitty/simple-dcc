@@ -4,7 +4,8 @@
       "release-type": "simple",
       "bump-minor-pre-major": true,
       "extra-files": [
-        "src/openlcb_user_config.c",
+        "CMakeLists.txt",
+        "src/protocol/lcc_interface.c",
         "src/cdi.xml"
       ],
       "changelog-sections": [
