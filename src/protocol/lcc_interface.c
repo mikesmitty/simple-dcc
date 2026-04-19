@@ -4,6 +4,7 @@
 #include "board_config.h"
 #include "wavegen/wavegen.h"
 #include "motor/motor.h"
+#include "lcc/lcc_task.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -165,13 +166,11 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
     g_train_node_id_base = 0x060100000000ULL;
 
     (void)get_unique_node_id;  // will be used once the new stack wires the CS node
+
+    lcc_task_init();
 }
 
 void task_protocol(void *params) {
     (void)params;
-    // New LCC stack is not wired yet (see plan milestones M2+). Idle the task
-    // so the scheduler can still start and the rest of the system comes up.
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
+    lcc_task_run();
 }

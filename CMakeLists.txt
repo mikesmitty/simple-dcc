@@ -1,3 +1,17 @@
+# == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
+if(WIN32)
+    set(USERHOME $ENV{USERPROFILE})
+else()
+    set(USERHOME $ENV{HOME})
+endif()
+set(sdkVersion 2.2.0)
+set(toolchainVersion 14_2_Rel1)
+set(picotoolVersion 2.2.0-a4)
+set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
+if (EXISTS ${picoVscode})
+    include(${picoVscode})
+endif()
+# ====================================================================================
 cmake_minimum_required(VERSION 3.13)
 
 # Board and platform must be set before importing SDK
@@ -28,6 +42,23 @@ add_custom_command(
     COMMAND python3 ${CMAKE_CURRENT_LIST_DIR}/tools/XmlToArray.py --header -t cdi -o ${CMAKE_CURRENT_BINARY_DIR}/cdi_data ${CMAKE_CURRENT_LIST_DIR}/src/cdi.xml
     DEPENDS ${CMAKE_CURRENT_LIST_DIR}/src/cdi.xml
     COMMENT "Generating cdi_data.c and cdi_data.h from cdi.xml"
+)
+
+# --- LCC stack (replaces OpenLcbCLib) ---
+add_library(lcc STATIC
+    src/lcc/lcc_frame.c
+    src/lcc/lcc_gc.c
+    src/lcc/lcc_if.c
+    src/lcc/lcc_task.c
+)
+target_include_directories(lcc PUBLIC
+    ${CMAKE_CURRENT_LIST_DIR}/src
+    ${CMAKE_CURRENT_LIST_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+target_link_libraries(lcc PUBLIC
+    pico_stdlib
+    FreeRTOS-Kernel-Heap4
 )
 
 # --- Main application ---
@@ -67,6 +98,7 @@ target_link_libraries(simple-dcc PRIVATE
     pico_flash
     pico_multicore
     FreeRTOS-Kernel-Heap4
+    lcc
 )
 
 # USB CDC for serial I/O, disable UART stdio, enable RTT for debug

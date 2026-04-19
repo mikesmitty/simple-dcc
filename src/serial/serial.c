@@ -5,6 +5,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include "lcc/lcc_if.h"
 #include "util/dbg.h"
 
 void serial_init(void) {
@@ -35,8 +36,6 @@ void task_serial(void *params) {
             continue;
         }
 
-        // New LCC stack (src/lcc/) not wired yet — discard incoming bytes.
-        // M2 replaces this with a single call to lcc_if_on_rx_byte((uint8_t)ch).
-        (void)ch;
+        lcc_if_on_rx_byte((uint8_t)ch);
     }
 }
