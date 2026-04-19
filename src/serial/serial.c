@@ -5,10 +5,6 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-#include "protocol/lcc_interface.h"
-#include "openlcb/openlcb_gridconnect.h"
-#include "drivers/canbus/can_types.h"
-#include "drivers/canbus/can_rx_statemachine.h"
 #include "util/dbg.h"
 
 void serial_init(void) {
@@ -27,7 +23,6 @@ bool serial_write_ready(void) {
 
 void task_serial(void *params) {
     (void)params;
-    gridconnect_buffer_t gc_buf;
 
     for (;;) {
         // Service USB stack — stdio_flush() calls tud_task() via the
@@ -40,12 +35,8 @@ void task_serial(void *params) {
             continue;
         }
 
-        if (OpenLcbGridConnect_copy_out_gridconnect_when_done((uint8_t)ch, &gc_buf)) {
-            DBG("[RX] %s\n", (char *)gc_buf);
-            can_msg_t can_msg = {0};
-            OpenLcbGridConnect_to_can_msg(&gc_buf, &can_msg);
-            lcc_interface_on_rx_can_msg(&can_msg);
-            CanRxStatemachine_incoming_can_driver_callback(&can_msg);
-        }
+        // New LCC stack (src/lcc/) not wired yet — discard incoming bytes.
+        // M2 replaces this with a single call to lcc_if_on_rx_byte((uint8_t)ch).
+        (void)ch;
     }
 }

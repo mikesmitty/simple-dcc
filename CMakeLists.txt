@@ -22,67 +22,17 @@ set(CMAKE_CXX_STANDARD 17)
 
 pico_sdk_init()
 
-# --- OpenLcbCLib ---
-set(OPENLCB_DIR ${CMAKE_CURRENT_LIST_DIR}/lib/OpenLcbCLib/src)
-
-add_library(openlcb
-    ${OPENLCB_DIR}/openlcb/openlcb_application.c
-    ${OPENLCB_DIR}/openlcb/openlcb_buffer_fifo.c
-    ${OPENLCB_DIR}/openlcb/openlcb_buffer_list.c
-    ${OPENLCB_DIR}/openlcb/openlcb_buffer_store.c
-    ${OPENLCB_DIR}/openlcb/openlcb_gridconnect.c
-    ${OPENLCB_DIR}/openlcb/openlcb_login_statemachine_handler.c
-    ${OPENLCB_DIR}/openlcb/openlcb_login_statemachine.c
-    ${OPENLCB_DIR}/openlcb/openlcb_main_statemachine.c
-    ${OPENLCB_DIR}/openlcb/openlcb_node.c
-    ${OPENLCB_DIR}/openlcb/openlcb_utilities.c
-    ${OPENLCB_DIR}/openlcb/openlcb_float16.c
-    ${OPENLCB_DIR}/openlcb/openlcb_config.c
-    ${OPENLCB_DIR}/openlcb/protocol_datagram_handler.c
-    ${OPENLCB_DIR}/openlcb/protocol_event_transport.c
-    ${OPENLCB_DIR}/openlcb/protocol_message_network.c
-    ${OPENLCB_DIR}/openlcb/protocol_snip.c
-    ${OPENLCB_DIR}/openlcb/protocol_config_mem_read_handler.c
-    ${OPENLCB_DIR}/openlcb/protocol_config_mem_write_handler.c
-    ${OPENLCB_DIR}/openlcb/protocol_config_mem_operations_handler.c
-    ${OPENLCB_DIR}/openlcb/protocol_broadcast_time_handler.c
-    ${OPENLCB_DIR}/openlcb/openlcb_application_broadcast_time.c
-    ${OPENLCB_DIR}/openlcb/protocol_train_handler.c
-    ${OPENLCB_DIR}/openlcb/openlcb_application_train.c
-    ${OPENLCB_DIR}/openlcb/protocol_train_search_handler.c
-    ${OPENLCB_DIR}/drivers/canbus/can_buffer_fifo.c
-    ${OPENLCB_DIR}/drivers/canbus/can_buffer_store.c
-    ${OPENLCB_DIR}/drivers/canbus/can_rx_message_handler.c
-    ${OPENLCB_DIR}/drivers/canbus/can_login_message_handler.c
-    ${OPENLCB_DIR}/drivers/canbus/can_tx_message_handler.c
-    ${OPENLCB_DIR}/drivers/canbus/can_main_statemachine.c
-    ${OPENLCB_DIR}/drivers/canbus/can_rx_statemachine.c
-    ${OPENLCB_DIR}/drivers/canbus/can_login_statemachine.c
-    ${OPENLCB_DIR}/drivers/canbus/can_tx_statemachine.c
-    ${OPENLCB_DIR}/drivers/canbus/can_utilities.c
-    ${OPENLCB_DIR}/drivers/canbus/can_config.c
-    ${OPENLCB_DIR}/drivers/canbus/alias_mappings.c
-    ${OPENLCB_DIR}/drivers/canbus/alias_mapping_listener.c
-)
-
-target_include_directories(openlcb PUBLIC
-    ${OPENLCB_DIR}
-    ${CMAKE_CURRENT_LIST_DIR}/src  # for openlcb_user_config.h, can_user_config.h
-)
-
+# --- CDI XML → C byte array ---
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cdi_data.c ${CMAKE_CURRENT_BINARY_DIR}/cdi_data.h
-    COMMAND python3 ${CMAKE_CURRENT_LIST_DIR}/lib/OpenLcbCLib/tools/xml_to_array/XmlToArray.py --header -t cdi -o ${CMAKE_CURRENT_BINARY_DIR}/cdi_data ${CMAKE_CURRENT_LIST_DIR}/src/cdi.xml
+    COMMAND python3 ${CMAKE_CURRENT_LIST_DIR}/tools/XmlToArray.py --header -t cdi -o ${CMAKE_CURRENT_BINARY_DIR}/cdi_data ${CMAKE_CURRENT_LIST_DIR}/src/cdi.xml
     DEPENDS ${CMAKE_CURRENT_LIST_DIR}/src/cdi.xml
     COMMENT "Generating cdi_data.c and cdi_data.h from cdi.xml"
 )
 
 # --- Main application ---
-set_source_files_properties(src/openlcb_user_config.c PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/cdi_data.c)
-
 add_executable(simple-dcc
     src/main.c
-    src/openlcb_user_config.c
     src/dcc/packet.c
     src/dcc/dcc.c
     src/dcc/functions.c
@@ -90,7 +40,6 @@ add_executable(simple-dcc
     src/queue/priority_queue.c
     src/serial/serial.c
     src/protocol/lcc_interface.c
-    src/protocol/lcc_traction.c
     src/motor/motor.c
     src/track/track.c
     src/util/event_bus.c
@@ -118,7 +67,6 @@ target_link_libraries(simple-dcc PRIVATE
     pico_flash
     pico_multicore
     FreeRTOS-Kernel-Heap4
-    openlcb
 )
 
 # USB CDC for serial I/O, disable UART stdio, enable RTT for debug
