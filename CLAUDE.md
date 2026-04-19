@@ -7,10 +7,11 @@ C/FreeRTOS DCC command station for RP2350 (Pico 2) with LCC/OpenLCB over USB.
 Requires `PICO_SDK_PATH` and `FREERTOS_KERNEL_PATH` environment variables.
 
 ```bash
-mkdir build && cd build
-cmake ..
-make
+make          # configures with Ninja on first run, then ninja -C build
+make clean    # wipes build/
 ```
+
+The root `Makefile` is a thin wrapper around `cmake -B build -G Ninja` + `ninja -C build`. Do not run `cmake ..` from inside `build/` — that silently switches the generator to Unix Makefiles.
 
 Output: `build/simple-dcc.uf2` — drag to RP2350 in BOOTSEL mode.
 
