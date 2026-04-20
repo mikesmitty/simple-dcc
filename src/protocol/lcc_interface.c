@@ -393,14 +393,16 @@ void lcc_interface_load_config(void) {
 // Thin shims that capture g_dcc_engine so the lcc_traction module stays
 // free of a dependency on the DCC engine type.
 
-static void traction_set_throttle(uint16_t addr, uint8_t step, bool forward) {
-    if (g_dcc_engine) dcc_set_throttle(g_dcc_engine, addr, step, forward);
+static void traction_set_throttle(uint16_t addr, bool is_long,
+                                   uint8_t step, bool forward) {
+    if (g_dcc_engine) dcc_set_throttle(g_dcc_engine, addr, is_long, step, forward);
 }
-static void traction_set_function(uint16_t addr, uint16_t fn, bool on) {
-    if (g_dcc_engine) dcc_set_function(g_dcc_engine, addr, fn, on);
+static void traction_set_function(uint16_t addr, bool is_long,
+                                   uint16_t fn, bool on) {
+    if (g_dcc_engine) dcc_set_function(g_dcc_engine, addr, is_long, fn, on);
 }
-static void traction_emergency_stop(uint16_t addr) {
-    if (g_dcc_engine) dcc_emergency_stop(g_dcc_engine, addr);
+static void traction_emergency_stop(uint16_t addr, bool is_long) {
+    if (g_dcc_engine) dcc_emergency_stop(g_dcc_engine, addr, is_long);
 }
 
 static const lcc_traction_hooks_t g_traction_hooks = {
@@ -449,9 +451,12 @@ static lcc_node_t *train_allocator(uint16_t dcc_addr, uint8_t flags,
     lcc_train_state_init(&g_train_states[slot], dcc_addr, is_long);
     g_train_states[slot].pending_search_event = event_id;
 
+    /* OpenLCB S-9.7.0.1: long addresses OR in the 0xC000 selector. */
+    uint64_t node_id = g_train_node_id_base | (uint64_t)dcc_addr;
+    if (is_long) node_id |= 0xC000ULL;
+
     lcc_node_t *node = &g_train_nodes[slot];
-    lcc_node_init(node, g_train_node_id_base | (uint64_t)dcc_addr,
-                  LCC_ROLE_TRAIN);
+    lcc_node_init(node, node_id, LCC_ROLE_TRAIN);
     node->snip     = &g_train_snip;
     node->pip_bits = LCC_PIP_SIMPLE_PROTOCOL
                    | LCC_PIP_EVENT_EXCHANGE
@@ -464,7 +469,7 @@ static lcc_node_t *train_allocator(uint16_t dcc_addr, uint8_t flags,
 
     g_train_used[slot] = true;
     if (g_dcc_engine)
-        dcc_ensure_loco(g_dcc_engine, dcc_addr);
+        dcc_ensure_loco(g_dcc_engine, dcc_addr, is_long);
     return node;
 }
 

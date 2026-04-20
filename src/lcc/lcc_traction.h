@@ -50,9 +50,9 @@ typedef struct lcc_train_state {
 } lcc_train_state_t;
 
 typedef struct {
-    void (*set_throttle)(uint16_t addr, uint8_t step, bool forward);
-    void (*set_function)(uint16_t addr, uint16_t fn, bool on);
-    void (*emergency_stop)(uint16_t addr);
+    void (*set_throttle)(uint16_t addr, bool is_long, uint8_t step, bool forward);
+    void (*set_function)(uint16_t addr, bool is_long, uint16_t fn, bool on);
+    void (*emergency_stop)(uint16_t addr, bool is_long);
 } lcc_traction_hooks_t;
 
 /* Wire DCC engine callbacks. Pass NULL to detach (e.g. for host tests). */

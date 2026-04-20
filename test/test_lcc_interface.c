@@ -84,18 +84,22 @@ void track_set_power(track_t *t, bool on) {
 
 /* dcc engine mocks — configure_mem writes don't touch DCC, but the
  * emergency-event path does. */
-void dcc_set_throttle(dcc_engine_t *d, uint16_t a, uint8_t s, bool f) {
-    (void)d; (void)a; (void)s; (void)f;
+void dcc_set_throttle(dcc_engine_t *d, uint16_t a, bool is_long,
+                       uint8_t s, bool f) {
+    (void)d; (void)a; (void)is_long; (void)s; (void)f;
 }
-void dcc_set_function(dcc_engine_t *d, uint16_t a, uint16_t fn, bool on) {
-    (void)d; (void)a; (void)fn; (void)on;
+void dcc_set_function(dcc_engine_t *d, uint16_t a, bool is_long,
+                       uint16_t fn, bool on) {
+    (void)d; (void)a; (void)is_long; (void)fn; (void)on;
 }
-void dcc_emergency_stop(dcc_engine_t *d, uint16_t a) { (void)d; (void)a; }
+void dcc_emergency_stop(dcc_engine_t *d, uint16_t a, bool is_long) {
+    (void)d; (void)a; (void)is_long;
+}
 static int dcc_estop_all_calls;
 void dcc_emergency_stop_all(dcc_engine_t *d) { (void)d; dcc_estop_all_calls++; }
 static int dcc_ensure_loco_calls;
-void dcc_ensure_loco(dcc_engine_t *d, uint16_t a) {
-    (void)d; (void)a; dcc_ensure_loco_calls++;
+void dcc_ensure_loco(dcc_engine_t *d, uint16_t a, bool is_long) {
+    (void)d; (void)a; (void)is_long; dcc_ensure_loco_calls++;
 }
 
 /* ---- LCC module mocks -------------------------------------------------- */

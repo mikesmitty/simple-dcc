@@ -55,7 +55,8 @@ static void on_set_speed(lcc_node_t *node, const uint8_t *payload, uint8_t len)
     bool     forward = !lcc_float16_is_negative(v);
 
     if (g_hooks.set_throttle)
-        g_hooks.set_throttle(node->train->dcc_address, step, forward);
+        g_hooks.set_throttle(node->train->dcc_address,
+                             node->train->is_long_address, step, forward);
 }
 
 static void on_set_fn(lcc_node_t *node, const uint8_t *payload, uint8_t len)
@@ -79,14 +80,16 @@ static void on_set_fn(lcc_node_t *node, const uint8_t *payload, uint8_t len)
     }
 
     if (g_hooks.set_function)
-        g_hooks.set_function(node->train->dcc_address, (uint16_t)fn, on);
+        g_hooks.set_function(node->train->dcc_address,
+                             node->train->is_long_address, (uint16_t)fn, on);
 }
 
 static void on_estop(lcc_node_t *node)
 {
     node->train->emergency = true;
     if (g_hooks.emergency_stop)
-        g_hooks.emergency_stop(node->train->dcc_address);
+        g_hooks.emergency_stop(node->train->dcc_address,
+                               node->train->is_long_address);
 }
 
 static void on_query_speeds(lcc_node_t *node, uint16_t reply_to)

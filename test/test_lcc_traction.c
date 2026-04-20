@@ -13,6 +13,7 @@
 
 typedef struct {
     uint16_t addr;
+    bool     is_long;
     uint8_t  step;
     bool     forward;
     int      calls;
@@ -20,6 +21,7 @@ typedef struct {
 
 typedef struct {
     uint16_t addr;
+    bool     is_long;
     uint16_t fn;
     bool     on;
     int      calls;
@@ -27,6 +29,7 @@ typedef struct {
 
 typedef struct {
     uint16_t addr;
+    bool     is_long;
     int      calls;
 } estop_rec_t;
 
@@ -34,20 +37,23 @@ static throttle_rec_t last_throttle;
 static function_rec_t last_function;
 static estop_rec_t    last_estop;
 
-static void mock_set_throttle(uint16_t addr, uint8_t step, bool forward) {
+static void mock_set_throttle(uint16_t addr, bool is_long, uint8_t step, bool forward) {
     last_throttle.addr = addr;
+    last_throttle.is_long = is_long;
     last_throttle.step = step;
     last_throttle.forward = forward;
     last_throttle.calls++;
 }
-static void mock_set_function(uint16_t addr, uint16_t fn, bool on) {
+static void mock_set_function(uint16_t addr, bool is_long, uint16_t fn, bool on) {
     last_function.addr = addr;
+    last_function.is_long = is_long;
     last_function.fn = fn;
     last_function.on = on;
     last_function.calls++;
 }
-static void mock_emergency_stop(uint16_t addr) {
+static void mock_emergency_stop(uint16_t addr, bool is_long) {
     last_estop.addr = addr;
+    last_estop.is_long = is_long;
     last_estop.calls++;
 }
 

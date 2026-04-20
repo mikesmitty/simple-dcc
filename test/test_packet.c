@@ -73,11 +73,11 @@ static void test_packet_is_invalid(void) {
     // Empty packet is invalid
     assert(packet_is_invalid(pkt));
 
-    // Add a zero byte — still invalid (first byte == 0)
+    // Broadcast-address packet (data[0] == 0x00) is valid — used by
+    // dcc_emergency_stop_all for the all-loco estop broadcast.
     packet_add_byte(pkt, 0x00);
-    assert(packet_is_invalid(pkt));
+    assert(!packet_is_invalid(pkt));
 
-    // Reset and add valid byte
     packet_reset(pkt);
     packet_add_byte(pkt, 0xFF);
     assert(!packet_is_invalid(pkt));

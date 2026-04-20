@@ -64,7 +64,7 @@ void packet_add_byte(dcc_packet_t *pkt, uint8_t b) {
 }
 
 bool packet_is_invalid(const dcc_packet_t *pkt) {
-    return (pkt->len == 0 || pkt->data[0] == 0);
+    return pkt->len == 0;
 }
 
 static void packet_add_checksum(dcc_packet_t *pkt) {

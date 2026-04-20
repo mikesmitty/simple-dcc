@@ -210,23 +210,26 @@ void lcc_train_search_dispatch(uint16_t src_alias, uint64_t event_id)
 
 void lcc_train_search_ensure_by_node_id(uint64_t node_id)
 {
-    /* DCC-proxy range is 06.01.00.00.00.00 + addr. Anything else is
-     * a real node and not our business. */
+    /* DCC-proxy range is 06.01.00.00.XX.YY. Long addresses OR in the
+     * 0xC000 selector (OpenLCB S-9.7.0.1 / TractionDefs::DCC_LONG_SELECTOR),
+     * so the raw address lives in the low 14 bits. */
     if ((node_id & 0xFFFFFFFF0000ULL) != LCC_TRAIN_NODE_ID_BASE)
         return;
-    uint32_t addr32 = (uint32_t)(node_id & 0xFFFFULL);
-    if (addr32 == 0 || addr32 > 0x3FFF)
+    uint16_t lo16   = (uint16_t)(node_id & 0xFFFFULL);
+    uint16_t addr   = lo16 & 0x3FFFu;
+    bool     is_long = (lo16 & 0xC000u) == 0xC000u || addr > LCC_DCC_SHORT_ADDR_MAX;
+    if (addr == 0)
         return;
     if (!g_alloc)
         return;
 
     uint8_t flags = LCC_TRAIN_SEARCH_FLAG_DCC;
-    if (addr32 > LCC_DCC_SHORT_ADDR_MAX)
+    if (is_long)
         flags |= LCC_TRAIN_SEARCH_FLAG_LONG_ADDR;
 
     /* event_id=0 — no deferred PRODUCER_IDENTIFIED_VALID owed; the VNI
      * path relies on AMD + Verified Node ID for discovery. */
-    (void)g_alloc((uint16_t)addr32, flags, 0);
+    (void)g_alloc(addr, flags, 0);
 }
 
 void lcc_train_search_flush_pending(void)

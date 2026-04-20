@@ -20,14 +20,25 @@ static loco_state_t *find_loco_locked(dcc_engine_t *dcc, uint16_t address) {
     return NULL;
 }
 
-static loco_state_t *find_or_create_loco_locked(dcc_engine_t *dcc, uint16_t address) {
+static loco_state_t *find_or_create_loco_locked(dcc_engine_t *dcc,
+                                                 uint16_t address,
+                                                 bool is_long) {
     loco_state_t *found = find_loco_locked(dcc, address);
-    if (found) return found;
+    if (found) {
+        /* Honor the caller's addressing choice if they disagree — a re-
+         * ensure with a different is_long is the only way we learn the
+         * decoder's actual addressing mode once the throttle declares it. */
+        if (address > SHORT_ADDRESS_MAX) is_long = true;
+        found->is_long_address = is_long;
+        return found;
+    }
 
     for (int i = 0; i < MAX_LOCOS; i++) {
         if (!dcc->locos[i].active) {
             dcc->locos[i].active = true;
             dcc->locos[i].address = address;
+            dcc->locos[i].is_long_address =
+                is_long || address > SHORT_ADDRESS_MAX;
             dcc->locos[i].speed_step = 0;
             dcc->locos[i].speed_mode = SPEED_MODE_128;
             dcc->locos[i].functions = 0;
@@ -39,29 +50,39 @@ static loco_state_t *find_or_create_loco_locked(dcc_engine_t *dcc, uint16_t addr
     return NULL;
 }
 
-void dcc_ensure_loco(dcc_engine_t *dcc, uint16_t address) {
+void dcc_ensure_loco(dcc_engine_t *dcc, uint16_t address, bool is_long) {
     xSemaphoreTake(dcc->mutex, portMAX_DELAY);
-    find_or_create_loco_locked(dcc, address);
+    find_or_create_loco_locked(dcc, address, is_long);
     xSemaphoreGive(dcc->mutex);
 }
 
 void dcc_forget_loco(dcc_engine_t *dcc, uint16_t address) {
-    dcc_emergency_stop(dcc, address);
     xSemaphoreTake(dcc->mutex, portMAX_DELAY);
     loco_state_t *loco = find_loco_locked(dcc, address);
+    bool is_long = loco ? loco->is_long_address : (address > SHORT_ADDRESS_MAX);
+    xSemaphoreGive(dcc->mutex);
+
+    dcc_emergency_stop(dcc, address, is_long);
+
+    xSemaphoreTake(dcc->mutex, portMAX_DELAY);
+    loco = find_loco_locked(dcc, address);
     if (loco) loco->active = false;
     xSemaphoreGive(dcc->mutex);
 }
 
-// Build a new packet with the DCC address header
-static dcc_packet_t *new_addressed_packet(uint16_t address) {
+// Build a new packet with the DCC address header. `is_long` chooses
+// between the 1-byte short form (0AAAAAAA) and 2-byte long form
+// (11AAAAAA AAAAAAAA). Addresses > SHORT_ADDRESS_MAX are always long.
+static dcc_packet_t *new_addressed_packet(uint16_t address, bool is_long) {
     dcc_packet_t *pkt = packet_alloc();
     if (!pkt) return NULL;
 
-    if (address > SHORT_ADDRESS_MAX) {
-        packet_add_byte(pkt, 0xC0 | (uint8_t)(address >> 8));
+    if (is_long || address > SHORT_ADDRESS_MAX) {
+        packet_add_byte(pkt, 0xC0 | (uint8_t)((address >> 8) & 0x3F));
+        packet_add_byte(pkt, (uint8_t)address);
+    } else {
+        packet_add_byte(pkt, (uint8_t)address);
     }
-    packet_add_byte(pkt, (uint8_t)address);
     pkt->address = address;
     return pkt;
 }
@@ -89,9 +110,10 @@ static uint8_t speed_step_28(uint8_t speed_step) {
 }
 
 static dcc_packet_t *build_throttle_packet(uint16_t address,
+                                            bool is_long,
                                             uint8_t speed_step,
                                             speed_mode_t mode) {
-    dcc_packet_t *pkt = new_addressed_packet(address);
+    dcc_packet_t *pkt = new_addressed_packet(address, is_long);
     if (!pkt) return NULL;
 
     switch (mode) {
@@ -119,34 +141,37 @@ static void send_packet(dcc_engine_t *dcc, dcc_packet_t *pkt) {
     }
 }
 
-void dcc_set_throttle(dcc_engine_t *dcc, uint16_t address,
+void dcc_set_throttle(dcc_engine_t *dcc, uint16_t address, bool is_long,
                       uint8_t speed, bool direction) {
     uint8_t speed_step = speed & 0x7F;
     if (direction) speed_step |= 0x80;
 
     speed_mode_t snapshot_mode = SPEED_MODE_128;
+    bool         snapshot_long = is_long || address > SHORT_ADDRESS_MAX;
     bool ok = false;
 
     xSemaphoreTake(dcc->mutex, portMAX_DELAY);
-    loco_state_t *loco = find_or_create_loco_locked(dcc, address);
+    loco_state_t *loco = find_or_create_loco_locked(dcc, address, is_long);
     if (loco) {
         loco->speed_step = speed_step;
         snapshot_mode = loco->speed_mode;
+        snapshot_long = loco->is_long_address;
         ok = true;
     }
     xSemaphoreGive(dcc->mutex);
 
     if (!ok) return;
-    dcc_packet_t *pkt = build_throttle_packet(address, speed_step, snapshot_mode);
+    dcc_packet_t *pkt = build_throttle_packet(address, snapshot_long,
+                                              speed_step, snapshot_mode);
     send_packet(dcc, pkt);
 }
 
-void dcc_set_function(dcc_engine_t *dcc, uint16_t address,
+void dcc_set_function(dcc_engine_t *dcc, uint16_t address, bool is_long,
                       uint16_t fn_number, bool on) {
     if (fn_number > MAX_FN_NUMBER) return;
 
     xSemaphoreTake(dcc->mutex, portMAX_DELAY);
-    loco_state_t *loco = find_or_create_loco_locked(dcc, address);
+    loco_state_t *loco = find_or_create_loco_locked(dcc, address, is_long);
     if (loco) {
         uint64_t prev_lo = loco->functions;
         uint8_t  prev_hi = loco->functions_hi;
@@ -172,14 +197,18 @@ void dcc_set_function(dcc_engine_t *dcc, uint16_t address,
     xSemaphoreGive(dcc->mutex);
 }
 
-void dcc_emergency_stop(dcc_engine_t *dcc, uint16_t address) {
+void dcc_emergency_stop(dcc_engine_t *dcc, uint16_t address, bool is_long) {
     speed_mode_t mode = SPEED_MODE_128;
+    bool         addr_is_long = is_long || address > SHORT_ADDRESS_MAX;
     xSemaphoreTake(dcc->mutex, portMAX_DELAY);
     loco_state_t *loco = find_loco_locked(dcc, address);
-    if (loco) mode = loco->speed_mode;
+    if (loco) {
+        mode = loco->speed_mode;
+        addr_is_long = loco->is_long_address;
+    }
     xSemaphoreGive(dcc->mutex);
 
-    dcc_packet_t *pkt = build_throttle_packet(address, 1, mode); // speed_step 1 = estop
+    dcc_packet_t *pkt = build_throttle_packet(address, addr_is_long, 1, mode); // step 1 = estop
     if (pkt) {
         pkt->priority = PRIORITY_EMERGENCY;
         send_packet(dcc, pkt);
@@ -203,29 +232,30 @@ static void send_reminder_packets(dcc_engine_t *dcc, loco_state_t *loco) {
 
     switch (dcc->loop_state) {
     case LOOP_STATE_SPEED:
-        pkt = build_throttle_packet(loco->address, loco->speed_step, loco->speed_mode);
+        pkt = build_throttle_packet(loco->address, loco->is_long_address,
+                                    loco->speed_step, loco->speed_mode);
         break;
     case LOOP_STATE_FN_GROUP1:
         if (loco->group_flags & FN_GROUP1) {
-            pkt = new_addressed_packet(loco->address);
+            pkt = new_addressed_packet(loco->address, loco->is_long_address);
             if (pkt) packet_add_byte(pkt, fn_encode_group1(loco->functions));
         }
         break;
     case LOOP_STATE_FN_GROUP2:
         if (loco->group_flags & FN_GROUP2) {
-            pkt = new_addressed_packet(loco->address);
+            pkt = new_addressed_packet(loco->address, loco->is_long_address);
             if (pkt) packet_add_byte(pkt, fn_encode_group2(loco->functions));
         }
         break;
     case LOOP_STATE_FN_GROUP3:
         if (loco->group_flags & FN_GROUP3) {
-            pkt = new_addressed_packet(loco->address);
+            pkt = new_addressed_packet(loco->address, loco->is_long_address);
             if (pkt) packet_add_byte(pkt, fn_encode_group3(loco->functions));
         }
         break;
     case LOOP_STATE_FN_GROUP4:
         if (loco->group_flags & FN_GROUP4) {
-            pkt = new_addressed_packet(loco->address);
+            pkt = new_addressed_packet(loco->address, loco->is_long_address);
             if (pkt) {
                 packet_add_byte(pkt, 0xDE);
                 packet_add_byte(pkt, fn_encode_group4(loco->functions));
@@ -234,7 +264,7 @@ static void send_reminder_packets(dcc_engine_t *dcc, loco_state_t *loco) {
         break;
     case LOOP_STATE_FN_GROUP5:
         if (loco->group_flags & FN_GROUP5) {
-            pkt = new_addressed_packet(loco->address);
+            pkt = new_addressed_packet(loco->address, loco->is_long_address);
             if (pkt) {
                 packet_add_byte(pkt, 0xDF);
                 packet_add_byte(pkt, fn_encode_group5(loco->functions));
@@ -243,7 +273,7 @@ static void send_reminder_packets(dcc_engine_t *dcc, loco_state_t *loco) {
         break;
     case LOOP_STATE_FN_GROUP6:
         if (loco->group_flags & FN_GROUP6) {
-            pkt = new_addressed_packet(loco->address);
+            pkt = new_addressed_packet(loco->address, loco->is_long_address);
             if (pkt) {
                 packet_add_byte(pkt, 0xD8);
                 packet_add_byte(pkt, fn_encode_group6(loco->functions));
@@ -252,7 +282,7 @@ static void send_reminder_packets(dcc_engine_t *dcc, loco_state_t *loco) {
         break;
     case LOOP_STATE_FN_GROUP7:
         if (loco->group_flags & FN_GROUP7) {
-            pkt = new_addressed_packet(loco->address);
+            pkt = new_addressed_packet(loco->address, loco->is_long_address);
             if (pkt) {
                 packet_add_byte(pkt, 0xD9);
                 packet_add_byte(pkt, fn_encode_group7(loco->functions));
@@ -261,7 +291,7 @@ static void send_reminder_packets(dcc_engine_t *dcc, loco_state_t *loco) {
         break;
     case LOOP_STATE_FN_GROUP8:
         if (loco->group_flags & FN_GROUP8) {
-            pkt = new_addressed_packet(loco->address);
+            pkt = new_addressed_packet(loco->address, loco->is_long_address);
             if (pkt) {
                 packet_add_byte(pkt, 0xDA);
                 packet_add_byte(pkt, fn_encode_group8(loco->functions));
@@ -270,7 +300,7 @@ static void send_reminder_packets(dcc_engine_t *dcc, loco_state_t *loco) {
         break;
     case LOOP_STATE_FN_GROUP9:
         if (loco->group_flags & FN_GROUP9) {
-            pkt = new_addressed_packet(loco->address);
+            pkt = new_addressed_packet(loco->address, loco->is_long_address);
             if (pkt) {
                 packet_add_byte(pkt, 0xDB);
                 packet_add_byte(pkt, fn_encode_group9(loco->functions));
@@ -279,7 +309,7 @@ static void send_reminder_packets(dcc_engine_t *dcc, loco_state_t *loco) {
         break;
     case LOOP_STATE_FN_GROUP10:
         if (loco->group_flags & FN_GROUP10) {
-            pkt = new_addressed_packet(loco->address);
+            pkt = new_addressed_packet(loco->address, loco->is_long_address);
             if (pkt) {
                 packet_add_byte(pkt, 0xDC);
                 packet_add_byte(pkt, fn_encode_group10(loco->functions, loco->functions_hi));

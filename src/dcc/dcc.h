@@ -36,6 +36,7 @@ typedef enum {
 typedef struct {
     bool         active;
     uint16_t     address;
+    bool         is_long_address; // short (1-127) vs 14-bit long; set at ensure_loco
     uint8_t      speed_step;     // bit 7 = direction, 6-0 = speed
     speed_mode_t speed_mode;
     uint64_t     functions;      // F0-F63 bitmask
@@ -54,15 +55,18 @@ void dcc_init(dcc_engine_t *dcc, QueueHandle_t output_queue);
 
 // Loco state management. These never expose loco_state_t pointers so that
 // all access to per-loco fields stays inside dcc.c under the engine mutex.
-void dcc_ensure_loco(dcc_engine_t *dcc, uint16_t address);
+void dcc_ensure_loco(dcc_engine_t *dcc, uint16_t address, bool is_long);
 void dcc_forget_loco(dcc_engine_t *dcc, uint16_t address);
 
-// Commands
-void dcc_set_throttle(dcc_engine_t *dcc, uint16_t address,
+// Commands. `is_long` selects the DCC wire-address form (2-byte 11xxxxxx
+// for long, 1-byte 0xxxxxxx for short). Addresses > 127 are always long
+// regardless of the flag. For addresses 1-127, the flag is honored so
+// decoders configured for long-address mode can be reached.
+void dcc_set_throttle(dcc_engine_t *dcc, uint16_t address, bool is_long,
                       uint8_t speed, bool direction);
-void dcc_set_function(dcc_engine_t *dcc, uint16_t address,
+void dcc_set_function(dcc_engine_t *dcc, uint16_t address, bool is_long,
                       uint16_t fn_number, bool on);
-void dcc_emergency_stop(dcc_engine_t *dcc, uint16_t address);
+void dcc_emergency_stop(dcc_engine_t *dcc, uint16_t address, bool is_long);
 void dcc_emergency_stop_all(dcc_engine_t *dcc);
 
 // Reminder loop (called periodically from task_dcc_reminder)
