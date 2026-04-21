@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.5.0](https://github.com/mikesmitty/simple-dcc/compare/v0.4.0...v0.5.0) (2026-04-21)
+
+
+### Features
+
+* **dcc:** add SMP concurrency safety and F0-F68 function range ([77eeebc](https://github.com/mikesmitty/simple-dcc/commit/77eeebcd919e3b715905892de875d33a0bba0c39))
+* **display:** add SSD1306 OLED with CDI-configurable I2C pins ([db35c56](https://github.com/mikesmitty/simple-dcc/commit/db35c56f29b0a0a9ef0903acdf9fb85645a7c75c))
+* **lcc:** add GridConnect interface skeleton (M2) ([30f24da](https://github.com/mikesmitty/simple-dcc/commit/30f24da19f1fb0cf1e4e7d357e288caf26d11173))
+* **lcc:** add M3 single-node stack (alias + PIP/SNIP/AME) ([68f9428](https://github.com/mikesmitty/simple-dcc/commit/68f94281d14d4a4f681f2557f54c81b2b1abb810))
+* **lcc:** add M4 events + memconfig stack ([2d57270](https://github.com/mikesmitty/simple-dcc/commit/2d572703dcdc28ae172b26f2d940858690c5b029))
+* **lcc:** add M5 traction core (float16, traction MTI, test train) ([633e2a3](https://github.com/mikesmitty/simple-dcc/commit/633e2a39d83731535f2391ab897ea75503a03e5c))
+* **lcc:** add M6 controller cfg + M7 train search ([8fb112b](https://github.com/mikesmitty/simple-dcc/commit/8fb112b5f22708103e88dc519ebfa880e6c1cf8f))
+* **lcc:** add M8 consist config + forwarding ([6a484a9](https://github.com/mikesmitty/simple-dcc/commit/6a484a91deb52f440a5ac246b028ca8c934273fc))
+* **lcc:** add M9 host tests + restore dynamic config updates ([167021f](https://github.com/mikesmitty/simple-dcc/commit/167021fff6eda335779f141217287bcaca70ca4d))
+
+
+### Bug Fixes
+
+* **dcc:** honor throttle long-address flag for short addresses ([aecb096](https://github.com/mikesmitty/simple-dcc/commit/aecb096477e77f284344dfddf96bf694f8460768))
+* **lcc:** use well-known DCC-proxy prefix for train node IDs ([c6f2197](https://github.com/mikesmitty/simple-dcc/commit/c6f219744a04dfac6819e2de0e0c996029c58f91))
+
+
+### Miscellaneous
+
+* **repo:** resolve code review TODOs ([96e5b5c](https://github.com/mikesmitty/simple-dcc/commit/96e5b5c4e06b7a13a8444c3815ad389a11115aa6))
+* update templated pico sdk import ([5119de1](https://github.com/mikesmitty/simple-dcc/commit/5119de161f8c2661fe6daeed22fb0efbff59cd03))
+* **usb:** set USB manufacturer and product strings ([63654d0](https://github.com/mikesmitty/simple-dcc/commit/63654d01e2b22b003243717dcd61b78620646f67))
+
+
+### Documentation
+
+* **build:** use root make wrapper (ninja generator) ([c6db0c0](https://github.com/mikesmitty/simple-dcc/commit/c6db0c0fea5f300344be204430e43dd079810085))
+
+
+### Refactoring
+
+* **lcc:** gut OpenLcbCLib wiring (M1) ([76d8c79](https://github.com/mikesmitty/simple-dcc/commit/76d8c793a300f37d6510368c692571510a33f031))
+
 ## [0.4.0](https://github.com/mikesmitty/simple-dcc/compare/v0.3.0...v0.4.0) (2026-03-30)
 
 

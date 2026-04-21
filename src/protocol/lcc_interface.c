@@ -29,7 +29,7 @@
  * releases report the tag verbatim. */
 #ifndef LCC_SW_VERSION
 // x-release-please-start-version
-#define LCC_SW_VERSION "0.4.0"
+#define LCC_SW_VERSION "0.5.0"
 // x-release-please-end
 #endif
 
