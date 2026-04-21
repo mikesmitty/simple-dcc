@@ -477,11 +477,16 @@ static void traction_set_function(uint16_t addr, bool is_long,
 static void traction_emergency_stop(uint16_t addr, bool is_long) {
     if (g_dcc_engine) dcc_emergency_stop(g_dcc_engine, addr, is_long);
 }
+static void traction_pom_write_byte(uint16_t addr, bool is_long,
+                                    uint16_t cv, uint8_t value) {
+    if (g_dcc_engine) dcc_pom_write_byte(g_dcc_engine, addr, is_long, cv, value);
+}
 
 static const lcc_traction_hooks_t g_traction_hooks = {
     .set_throttle   = traction_set_throttle,
     .set_function   = traction_set_function,
     .emergency_stop = traction_emergency_stop,
+    .pom_write_byte = traction_pom_write_byte,
 };
 
 // --- Train pool allocator (M7) -----------------------------------------
@@ -536,6 +541,7 @@ static lcc_node_t *train_allocator(uint16_t dcc_addr, uint8_t flags,
                    | LCC_PIP_SIMPLE_NODE_INFO
                    | LCC_PIP_TRAIN_CONTROL;
     node->train    = &g_train_states[slot];
+    lcc_traction_register_cv_space(node);
 
     if (!lcc_node_register(node))
         return NULL;

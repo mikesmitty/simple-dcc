@@ -18,6 +18,16 @@ void lcc_memconfig_register_spaces(const lcc_memspace_handler_t *spaces,
     g_space_count = (count > LCC_MAX_MEMSPACES) ? LCC_MAX_MEMSPACES : count;
 }
 
+void lcc_memconfig_register_node_spaces(lcc_node_t *node,
+                                        const lcc_memspace_handler_t *spaces,
+                                        uint8_t count)
+{
+    node->node_spaces      = spaces;
+    node->node_space_count = (count > LCC_MAX_MEMSPACES)
+                                 ? LCC_MAX_MEMSPACES
+                                 : count;
+}
+
 void lcc_memconfig_set_hooks(lcc_memconfig_reboot_fn reboot,
                              lcc_memconfig_factory_reset_fn factory_reset)
 {
@@ -25,8 +35,18 @@ void lcc_memconfig_set_hooks(lcc_memconfig_reboot_fn reboot,
     g_factory_reset = factory_reset;
 }
 
-static const lcc_memspace_handler_t *find_space(uint8_t space)
+/* Per-node spaces win over global spaces when both declare the same id.
+ * Lets a train node advertise 0xF8 (traction CVs) without the CS node
+ * also exposing it. */
+static const lcc_memspace_handler_t *find_space(const lcc_node_t *node,
+                                                uint8_t space)
 {
+    if (node && node->node_spaces) {
+        for (uint8_t i = 0; i < node->node_space_count; i++) {
+            if (node->node_spaces[i].space == space)
+                return &node->node_spaces[i];
+        }
+    }
     for (uint8_t i = 0; i < g_space_count; i++) {
         if (g_spaces[i].space == space)
             return &g_spaces[i];
@@ -69,7 +89,7 @@ static void handle_get_space_info(lcc_node_t *node, uint16_t src_alias,
     if (len < 3)
         return;
     uint8_t space = buf[2];
-    const lcc_memspace_handler_t *h = find_space(space);
+    const lcc_memspace_handler_t *h = find_space(node, space);
 
     uint8_t reply[8];
     reply[0] = LCC_MEMCONFIG_CMD;
@@ -112,7 +132,7 @@ static void handle_read(lcc_node_t *node, uint16_t src_alias,
     if (count == 0)
         return;
 
-    const lcc_memspace_handler_t *h = find_space(space);
+    const lcc_memspace_handler_t *h = find_space(node, space);
     if (!h || !h->read)
         return;
 
@@ -162,7 +182,7 @@ static void handle_write(lcc_node_t *node, uint16_t src_alias,
     if (data_offset >= len)
         return;
 
-    const lcc_memspace_handler_t *h = find_space(space);
+    const lcc_memspace_handler_t *h = find_space(node, space);
     if (!h || h->read_only || !h->write)
         return;
 
@@ -185,8 +205,15 @@ static void handle_write(lcc_node_t *node, uint16_t src_alias,
 
 static void handle_update_complete(lcc_node_t *node)
 {
-    /* Fire update_complete on every registered space. Spaces that share
-     * a backing store should dedupe internally. */
+    /* Fire update_complete on every space visible to this node (per-node
+     * first, then global). Spaces that share a backing store should dedupe
+     * internally. */
+    if (node->node_spaces) {
+        for (uint8_t i = 0; i < node->node_space_count; i++) {
+            if (node->node_spaces[i].update_complete)
+                node->node_spaces[i].update_complete(node);
+        }
+    }
     for (uint8_t i = 0; i < g_space_count; i++) {
         if (g_spaces[i].update_complete)
             g_spaces[i].update_complete(node);

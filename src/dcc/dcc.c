@@ -249,6 +249,16 @@ void dcc_emergency_stop_all(dcc_engine_t *dcc) {
     send_packet(dcc, pkt);
 }
 
+void dcc_pom_write_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,
+                        uint16_t cv, uint8_t value) {
+    dcc_packet_t *pkt = packet_alloc();
+    if (!pkt) return;
+    // NMRA S-9.2.1 recommends ≥ 3 repeats so the decoder has multiple
+    // chances to latch the value through noise / arbitration.
+    packet_build_pom_write_byte(pkt, address, is_long, cv, value, 3);
+    send_packet(dcc, pkt);
+}
+
 static void send_reminder_packets(dcc_engine_t *dcc, loco_state_t *loco) {
     dcc_packet_t *pkt = NULL;
 

@@ -101,6 +101,10 @@ static int dcc_ensure_loco_calls;
 void dcc_ensure_loco(dcc_engine_t *d, uint16_t a, bool is_long) {
     (void)d; (void)a; (void)is_long; dcc_ensure_loco_calls++;
 }
+void dcc_pom_write_byte(dcc_engine_t *d, uint16_t a, bool is_long,
+                        uint16_t cv, uint8_t v) {
+    (void)d; (void)a; (void)is_long; (void)cv; (void)v;
+}
 
 /* ---- LCC module mocks -------------------------------------------------- */
 
@@ -137,6 +141,7 @@ static lcc_memconfig_factory_reset_fn  captured_factory_reset_hook;
 void lcc_traction_set_hooks(const lcc_traction_hooks_t *hooks) {
     captured_traction_hooks = hooks;
 }
+void lcc_traction_register_cv_space(lcc_node_t *node) { (void)node; }
 void lcc_train_state_init(lcc_train_state_t *state, uint16_t addr, bool is_long) {
     memset(state, 0, sizeof(*state));
     state->dcc_address = addr;

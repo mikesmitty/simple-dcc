@@ -32,8 +32,9 @@ typedef struct {
     bool     active;
 } lcc_datagram_rx_t;
 
-struct lcc_snip;          /* defined in lcc_snip.h */
-struct lcc_train_state;   /* defined in lcc_traction.h */
+struct lcc_snip;              /* defined in lcc_snip.h */
+struct lcc_train_state;       /* defined in lcc_traction.h */
+struct lcc_memspace_handler;  /* defined in lcc_memconfig.h */
 
 typedef struct lcc_node {
     uint64_t                       id;
@@ -46,6 +47,11 @@ typedef struct lcc_node {
     uint64_t                       pip_bits;  /* PIP advertisement, lcc_defs.h LCC_PIP_* */
     lcc_datagram_rx_t              dg_rx;
     struct lcc_train_state        *train;     /* non-NULL iff role == LCC_ROLE_TRAIN */
+    /* Per-node memory-config spaces, consulted before the global table.
+     * Lets train nodes publish e.g. the traction-CV space (0xF8) without
+     * the CS node advertising it. NULL/0 when unused. */
+    const struct lcc_memspace_handler *node_spaces;
+    uint8_t                            node_space_count;
 } lcc_node_t;
 
 /* Registry: fixed-size static array. CS + up to (LCC_MAX_NODES - 1) trains. */

@@ -3,6 +3,7 @@
 #include "lcc/lcc_node.h"
 #include "lcc/lcc_frame.h"
 #include "lcc/lcc_if.h"
+#include "lcc/lcc_memconfig.h"
 
 #include <string.h>
 
@@ -23,6 +24,118 @@ void lcc_train_state_init(lcc_train_state_t *state,
     memset(state, 0, sizeof(*state));
     state->dcc_address     = dcc_address;
     state->is_long_address = is_long_address;
+}
+
+/* ---- Traction CV space (0xF8) — OpenMRN TractionCvSpace layout --------
+ *
+ * Offsets (from TractionCvSpace.hxx):
+ *   0x7F000000  4 bytes  CV index, 1-based, big-endian (writable, readable)
+ *   0x7F000004  1 byte   CV value (write triggers POM write with latched CV;
+ *                                  read triggers RailCom fetch — Phase 3)
+ *   0x7F000005  1 byte   CV verify value (Phase 3)
+ *   0x7F000006  1 byte   CV verify result (Phase 3)
+ *
+ * All callbacks run on the LCC task with `node->train` pointing at the
+ * train whose space was addressed — mem-config's per-node dispatch is
+ * what routes 0xF8 to the right decoder without a global CV-owner.
+ */
+
+enum {
+    CV_OFFSET_INDEX         = 0x7F000000u,
+    CV_OFFSET_VALUE         = 0x7F000004u,
+    CV_OFFSET_VERIFY_VALUE  = 0x7F000005u,
+    CV_OFFSET_VERIFY_RESULT = 0x7F000006u,
+    CV_SPACE_SIZE           = 0x7F000007u, /* highest addr = size - 1 */
+};
+
+static uint16_t cv_space_read(lcc_node_t *node, uint32_t addr,
+                              uint16_t count, uint8_t *out)
+{
+    if (!node->train) return 0;
+
+    /* CV_INDEX is readable: echo the latched 1-based CV as 4 BE bytes so
+     * JMRI can reflect the currently-targeted CV in its UI. */
+    if (addr >= CV_OFFSET_INDEX && addr < CV_OFFSET_VALUE) {
+        uint8_t bytes[4];
+        uint16_t cv = node->train->pom_cv_index;
+        bytes[0] = (uint8_t)((cv >> 24) & 0xFF);
+        bytes[1] = (uint8_t)((cv >> 16) & 0xFF);
+        bytes[2] = (uint8_t)((cv >>  8) & 0xFF);
+        bytes[3] = (uint8_t)( cv        & 0xFF);
+        uint32_t off = addr - CV_OFFSET_INDEX;
+        uint16_t avail = (uint16_t)(4u - off);
+        if (count > avail) count = avail;
+        memcpy(out, &bytes[off], count);
+        return count;
+    }
+
+    /* CV_VALUE read is the RailCom-fetch path — deferred to Phase 3.
+     * Return zero bytes for now; JMRI surfaces this as a read failure. */
+    (void)count;
+    (void)out;
+    return 0;
+}
+
+static uint16_t cv_space_write(lcc_node_t *node, uint32_t addr,
+                               uint16_t count, const uint8_t *in)
+{
+    if (!node->train) return 0;
+
+    /* CV_INDEX latches the 1-based CV number. OpenMRN accepts 1-4 byte
+     * partial writes anywhere within the 4-byte span; match that. */
+    if (addr >= CV_OFFSET_INDEX && addr < CV_OFFSET_VALUE) {
+        uint32_t off   = addr - CV_OFFSET_INDEX;
+        uint16_t avail = (uint16_t)(4u - off);
+        if (count > avail) count = avail;
+
+        uint8_t bytes[4];
+        uint16_t cv = node->train->pom_cv_index;
+        bytes[0] = (uint8_t)((cv >> 24) & 0xFF);
+        bytes[1] = (uint8_t)((cv >> 16) & 0xFF);
+        bytes[2] = (uint8_t)((cv >>  8) & 0xFF);
+        bytes[3] = (uint8_t)( cv        & 0xFF);
+        memcpy(&bytes[off], in, count);
+        node->train->pom_cv_index = (uint16_t)(
+              ((uint32_t)bytes[0] << 24)
+            | ((uint32_t)bytes[1] << 16)
+            | ((uint32_t)bytes[2] <<  8)
+            |  (uint32_t)bytes[3]);
+        return count;
+    }
+
+    /* CV_VALUE: one-byte write triggers the POM packet via the hook. */
+    if (addr == CV_OFFSET_VALUE && count >= 1) {
+        uint16_t cv = node->train->pom_cv_index;
+        if (cv != 0 && g_hooks.pom_write_byte) {
+            g_hooks.pom_write_byte(node->train->dcc_address,
+                                   node->train->is_long_address,
+                                   cv, in[0]);
+        }
+        return 1;
+    }
+
+    /* VERIFY_VALUE / VERIFY_RESULT: Phase 3. Accept + drop so JMRI's
+     * writes don't error out. */
+    if (addr == CV_OFFSET_VERIFY_VALUE && count >= 1)
+        return 1;
+
+    return 0;
+}
+
+static const lcc_memspace_handler_t g_cv_space_handler[] = {
+    {
+        .space           = 0xF8,
+        .size            = CV_SPACE_SIZE,
+        .read_only       = false,
+        .read            = cv_space_read,
+        .write           = cv_space_write,
+        .update_complete = NULL,
+    },
+};
+
+void lcc_traction_register_cv_space(lcc_node_t *train_node)
+{
+    lcc_memconfig_register_node_spaces(train_node, g_cv_space_handler, 1);
 }
 
 /* OpenLCB float16 velocity → DCC 128-step. The 126/126.8 divisor matches the

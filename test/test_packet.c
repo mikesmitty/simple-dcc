@@ -101,6 +101,101 @@ static void test_checksum(void) {
     printf("  PASS: checksum\n");
 }
 
+static void test_pom_write_short_address(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // Address 3 (short), CV 3, value 42.
+    // Wire: [0x03, 0xEC, 0x02, 0x2A]
+    //   0x03 = short address
+    //   0xEC = 1110_1100 (write-byte opcode, cv high bits = 00)
+    //   0x02 = cv - 1 low byte (cv=3 → 2)
+    //   0x2A = 42
+    packet_build_pom_write_byte(pkt, 3, false, 3, 42, 3);
+    assert(pkt->len == 4);
+    assert(pkt->data[0] == 0x03);
+    assert(pkt->data[1] == 0xEC);
+    assert(pkt->data[2] == 0x02);
+    assert(pkt->data[3] == 0x2A);
+    assert(pkt->address == 3);
+    assert(pkt->priority == PRIORITY_HIGH);
+    assert(pkt->repeats == 3);
+
+    packet_free(pkt);
+    printf("  PASS: POM write, short address\n");
+}
+
+static void test_pom_write_long_address(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // Address 3000 (long), CV 29, value 0x06.
+    //   0xCB = 11_001011 (long prefix | (3000 >> 8) = 0x0B)
+    //   0xB8 = 3000 & 0xFF
+    //   0xEC = write-byte, cv high = 0
+    //   0x1C = cv - 1 = 28 low byte
+    //   0x06 = value
+    packet_build_pom_write_byte(pkt, 3000, true, 29, 0x06, 3);
+    assert(pkt->len == 5);
+    assert(pkt->data[0] == 0xCB);
+    assert(pkt->data[1] == 0xB8);
+    assert(pkt->data[2] == 0xEC);
+    assert(pkt->data[3] == 0x1C);
+    assert(pkt->data[4] == 0x06);
+
+    packet_free(pkt);
+    printf("  PASS: POM write, long address\n");
+}
+
+static void test_pom_write_high_cv_address(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // Address 3 (short), CV 1024 (max), value 5.
+    //   wire_cv = 1023 = 0x3FF → high 2 bits = 0x03, low 8 = 0xFF
+    //   first POM byte = 0xEC | 0x03 = 0xEF
+    packet_build_pom_write_byte(pkt, 3, false, 1024, 5, 3);
+    assert(pkt->len == 4);
+    assert(pkt->data[0] == 0x03);
+    assert(pkt->data[1] == 0xEF);
+    assert(pkt->data[2] == 0xFF);
+    assert(pkt->data[3] == 0x05);
+
+    packet_free(pkt);
+    printf("  PASS: POM write, high CV (1024)\n");
+}
+
+static void test_pom_write_auto_long_address(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // Address 200 with is_long=false → builder must auto-promote to
+    // long form since 200 > SHORT_ADDRESS_MAX (127). This matches the
+    // throttle-path fix aecb096.
+    packet_build_pom_write_byte(pkt, 200, false, 3, 42, 3);
+    assert(pkt->len == 5);
+    assert(pkt->data[0] == 0xC0);     // 11_000000 | (200 >> 8) = 0xC0
+    assert(pkt->data[1] == 0xC8);     // 200 & 0xFF
+
+    packet_free(pkt);
+    printf("  PASS: POM write, auto-promote > 127 to long\n");
+}
+
+static void test_pom_write_short_forced_long(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // Address 3 forced long — some decoders are configured with long
+    // addresses in the short range. Must emit the 2-byte long form.
+    packet_build_pom_write_byte(pkt, 3, true, 3, 42, 3);
+    assert(pkt->len == 5);
+    assert(pkt->data[0] == 0xC0);     // 11_000000 | 0
+    assert(pkt->data[1] == 0x03);
+
+    packet_free(pkt);
+    printf("  PASS: POM write, short-in-long-form honored\n");
+}
+
 int main(void) {
     printf("test_packet:\n");
     test_idle_packet_encode();
@@ -108,6 +203,11 @@ int main(void) {
     test_pool_alloc_free();
     test_packet_is_invalid();
     test_checksum();
+    test_pom_write_short_address();
+    test_pom_write_long_address();
+    test_pom_write_high_cv_address();
+    test_pom_write_auto_long_address();
+    test_pom_write_short_forced_long();
     printf("All packet tests passed.\n");
     return 0;
 }

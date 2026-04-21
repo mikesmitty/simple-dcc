@@ -75,6 +75,15 @@ void dcc_set_function(dcc_engine_t *dcc, uint16_t address, bool is_long,
 void dcc_emergency_stop(dcc_engine_t *dcc, uint16_t address, bool is_long);
 void dcc_emergency_stop_all(dcc_engine_t *dcc);
 
+// Programming-on-Main byte write. Emits a single NMRA POM write-byte
+// packet (repeated `repeats` times on the wire — 3 is the NMRA-
+// recommended minimum) and returns. Unlike throttle/function commands
+// this does NOT touch loco state and does NOT enter the reminder loop;
+// the decoder commits the CV change on the first successfully received
+// copy and further repeats are harmless. `cv` is 1-based.
+void dcc_pom_write_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,
+                        uint16_t cv, uint8_t value);
+
 // Reminder loop (called periodically from task_dcc_reminder)
 void dcc_update(dcc_engine_t *dcc);
 

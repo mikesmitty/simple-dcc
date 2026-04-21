@@ -47,12 +47,21 @@ typedef struct lcc_train_state {
     uint8_t       rx_len;
     uint16_t      rx_src;
     bool          rx_active;
+    /* Latched POM CV index (1-based) written to mem-config space 0xF8
+     * offset OFFSET_CV_INDEX. Writes to OFFSET_CV_VALUE use this as the
+     * target CV. 0 = not yet indexed; value writes before an index write
+     * are silently dropped (JMRI always writes INDEX before VALUE). */
+    uint16_t      pom_cv_index;
 } lcc_train_state_t;
 
 typedef struct {
     void (*set_throttle)(uint16_t addr, bool is_long, uint8_t step, bool forward);
     void (*set_function)(uint16_t addr, bool is_long, uint16_t fn, bool on);
     void (*emergency_stop)(uint16_t addr, bool is_long);
+    /* POM byte-write for the traction CV space (0xF8). May be NULL for
+     * hosts that don't own a DCC engine; writes are then no-ops. */
+    void (*pom_write_byte)(uint16_t addr, bool is_long,
+                           uint16_t cv, uint8_t value);
 } lcc_traction_hooks_t;
 
 /* Wire DCC engine callbacks. Pass NULL to detach (e.g. for host tests). */
@@ -62,6 +71,11 @@ void lcc_traction_set_hooks(const lcc_traction_hooks_t *hooks);
 void lcc_train_state_init(lcc_train_state_t *state,
                           uint16_t dcc_address,
                           bool is_long_address);
+
+/* Attach the traction-CV mem-config space (0xF8) to a train node. Uses a
+ * single shared handler that routes through node->train. Call once per
+ * train node before the node starts serving datagrams. */
+void lcc_traction_register_cv_space(lcc_node_t *train_node);
 
 /* Handle a TRACTION_CONTROL_COMMAND frame whose addressed-destination has
  * already been verified to be `node`. Caller has not stripped the addressed

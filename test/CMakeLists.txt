@@ -37,6 +37,7 @@ add_executable(test_lcc_traction
     test_lcc_traction.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/lcc/lcc_traction.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/lcc/lcc_float16.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/lcc/lcc_memconfig.c
 )
 target_include_directories(test_lcc_traction PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}

@@ -41,8 +41,8 @@ typedef uint16_t (*lcc_memspace_write_fn)(lcc_node_t *node,
  * (0xA8). Backing store may commit pending changes (e.g. flash flush). */
 typedef void (*lcc_memspace_update_fn)(lcc_node_t *node);
 
-typedef struct {
-    uint8_t                space;     /* 0xFF / 0xFE / 0xFD / 0xFC / 0xFB */
+typedef struct lcc_memspace_handler {
+    uint8_t                space;     /* 0xFF / 0xFE / 0xFD / 0xFC / 0xFB / 0xF8 */
     uint32_t               size;      /* bytes; highest-address reply = size-1 */
     bool                   read_only;
     lcc_memspace_read_fn   read;
@@ -50,11 +50,19 @@ typedef struct {
     lcc_memspace_update_fn update_complete;  /* may be NULL */
 } lcc_memspace_handler_t;
 
-/* Replace the current space table. The referenced entries must outlive
- * the LCC stack (static storage). Intended to be called once from the
- * glue layer's init routine. */
+/* Replace the current global space table. The referenced entries must
+ * outlive the LCC stack (static storage). Intended to be called once
+ * from the glue layer's init routine. */
 void lcc_memconfig_register_spaces(const lcc_memspace_handler_t *spaces,
                                    uint8_t count);
+
+/* Attach a per-node space table. Per-node spaces take precedence over
+ * global ones when both declare the same space id, so a node can e.g.
+ * expose a traction-CV space (0xF8) without advertising it on the CS
+ * node. The table must outlive the node. */
+void lcc_memconfig_register_node_spaces(lcc_node_t *node,
+                                        const lcc_memspace_handler_t *spaces,
+                                        uint8_t count);
 
 /* Callback type for factory reset: the glue layer clears its backing
  * config store and reboots. NULL disables 0xAA. */

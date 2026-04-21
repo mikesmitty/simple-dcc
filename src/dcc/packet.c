@@ -115,3 +115,29 @@ void packet_make_idle(dcc_packet_t *pkt) {
     const uint8_t idle[] = { 0xFF, 0x00 };
     packet_fill(pkt, idle, 2, BROADCAST_ADDRESS, PRIORITY_BEST_EFFORT, 0);
 }
+
+#define SHORT_ADDRESS_MAX_PKT 127
+
+void packet_build_pom_write_byte(dcc_packet_t *pkt,
+                                 uint16_t address, bool is_long,
+                                 uint16_t cv, uint8_t value,
+                                 int8_t repeats) {
+    packet_reset(pkt);
+
+    if (is_long || address > SHORT_ADDRESS_MAX_PKT) {
+        packet_add_byte(pkt, 0xC0 | (uint8_t)((address >> 8) & 0x3F));
+        packet_add_byte(pkt, (uint8_t)address);
+    } else {
+        packet_add_byte(pkt, (uint8_t)address);
+    }
+
+    // NMRA S-9.2.1: the 10-bit CV number on the wire is (cv - 1).
+    uint16_t wire_cv = (uint16_t)(cv - 1) & 0x3FF;
+    packet_add_byte(pkt, 0xEC | (uint8_t)((wire_cv >> 8) & 0x03));
+    packet_add_byte(pkt, (uint8_t)(wire_cv & 0xFF));
+    packet_add_byte(pkt, value);
+
+    pkt->address  = address;
+    pkt->priority = PRIORITY_HIGH;
+    pkt->repeats  = repeats;
+}

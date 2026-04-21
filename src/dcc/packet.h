@@ -46,4 +46,17 @@ encoded_packet_t packet_encode(dcc_packet_t *pkt);
 
 void           packet_make_idle(dcc_packet_t *pkt);
 
+// Build a Programming-on-Main (POM) write-byte packet per NMRA S-9.2.1:
+//     {address}  1110_11_VV  CCCCCCCC  DDDDDDDD
+// where `VV:CCCCCCCC` is the 10-bit wire encoding of (cv - 1) and
+// `DDDDDDDD` is the value. `is_long` forces the 2-byte long-address
+// form; short addresses (1..127) with is_long==false emit the 1-byte
+// form. Sets PRIORITY_HIGH and the caller-supplied repeat count (NMRA
+// recommends ≥3 so the decoder has several chances to decode the
+// command). `cv` is 1-based.
+void           packet_build_pom_write_byte(dcc_packet_t *pkt,
+                                           uint16_t address, bool is_long,
+                                           uint16_t cv, uint8_t value,
+                                           int8_t repeats);
+
 #endif // PACKET_H

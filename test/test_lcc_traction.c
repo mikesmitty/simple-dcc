@@ -8,6 +8,7 @@
 #include "lcc/lcc_frame.h"
 #include "lcc/lcc_defs.h"
 #include "lcc/lcc_float16.h"
+#include "lcc/lcc_memconfig.h"
 
 /* ---- DCC hook capture ---------------------------------------------------- */
 
@@ -33,9 +34,18 @@ typedef struct {
     int      calls;
 } estop_rec_t;
 
+typedef struct {
+    uint16_t addr;
+    bool     is_long;
+    uint16_t cv;
+    uint8_t  value;
+    int      calls;
+} pom_rec_t;
+
 static throttle_rec_t last_throttle;
 static function_rec_t last_function;
 static estop_rec_t    last_estop;
+static pom_rec_t      last_pom;
 
 static void mock_set_throttle(uint16_t addr, bool is_long, uint8_t step, bool forward) {
     last_throttle.addr = addr;
@@ -55,6 +65,14 @@ static void mock_emergency_stop(uint16_t addr, bool is_long) {
     last_estop.addr = addr;
     last_estop.is_long = is_long;
     last_estop.calls++;
+}
+static void mock_pom_write_byte(uint16_t addr, bool is_long,
+                                uint16_t cv, uint8_t value) {
+    last_pom.addr = addr;
+    last_pom.is_long = is_long;
+    last_pom.cv = cv;
+    last_pom.value = value;
+    last_pom.calls++;
 }
 
 /* ---- lcc_node / lcc_if mocks -------------------------------------------- */
@@ -101,12 +119,44 @@ lcc_node_t *lcc_node_at(int idx) {
     return g_mock_registry[idx];
 }
 
+/* ---- lcc_datagram mocks ------------------------------------------------- */
+/* Pulled in because lcc_memconfig.c (linked for the CV-space tests) emits
+ * datagram replies. Capture last reply so the CV-space tests can assert. */
+
+typedef struct {
+    uint16_t dst_alias;
+    uint8_t  data[72];
+    uint16_t len;
+    int      calls;
+} dg_rec_t;
+
+static dg_rec_t last_datagram;
+static dg_rec_t last_datagram_ok;
+
+void lcc_datagram_send(const lcc_node_t *node, uint16_t dst_alias,
+                       const uint8_t *data, uint8_t len) {
+    (void)node;
+    last_datagram.dst_alias = dst_alias;
+    last_datagram.len = len < sizeof(last_datagram.data)
+                           ? len : (uint16_t)sizeof(last_datagram.data);
+    memcpy(last_datagram.data, data, last_datagram.len);
+    last_datagram.calls++;
+}
+void lcc_datagram_send_ok(const lcc_node_t *node, uint16_t dst_alias) {
+    (void)node;
+    last_datagram_ok.dst_alias = dst_alias;
+    last_datagram_ok.calls++;
+}
+
 /* ---- helpers ------------------------------------------------------------ */
 
 static void reset_all(void) {
     memset(&last_throttle, 0, sizeof(last_throttle));
     memset(&last_function, 0, sizeof(last_function));
     memset(&last_estop, 0, sizeof(last_estop));
+    memset(&last_pom, 0, sizeof(last_pom));
+    memset(&last_datagram, 0, sizeof(last_datagram));
+    memset(&last_datagram_ok, 0, sizeof(last_datagram_ok));
     memset(&last_reply, 0, sizeof(last_reply));
     memset(g_mock_registry, 0, sizeof(g_mock_registry));
     g_mock_count = 0;
@@ -115,6 +165,7 @@ static void reset_all(void) {
         .set_throttle   = mock_set_throttle,
         .set_function   = mock_set_function,
         .emergency_stop = mock_emergency_stop,
+        .pom_write_byte = mock_pom_write_byte,
     };
     lcc_traction_set_hooks(&hooks);
 }
@@ -499,6 +550,152 @@ static void test_hooks_null_detach(void) {
     printf("  PASS: null hooks detach\n");
 }
 
+/* ---- CV space (0xF8) ---------------------------------------------------- */
+
+/* Memory-config write-command datagram payload:
+ *   [0x20][0x00][addr:4 be][space:1][data...]   (space-field form)
+ * We always use the explicit-space form for 0xF8. */
+static uint8_t mc_write(uint8_t *buf, uint32_t addr, const uint8_t *data,
+                        uint8_t data_len) {
+    buf[0] = 0x20;                /* memconfig protocol */
+    buf[1] = 0x00;                /* WRITE, explicit space follows */
+    buf[2] = (uint8_t)(addr >> 24);
+    buf[3] = (uint8_t)(addr >> 16);
+    buf[4] = (uint8_t)(addr >>  8);
+    buf[5] = (uint8_t)(addr      );
+    buf[6] = 0xF8;                /* traction CV space */
+    memcpy(&buf[7], data, data_len);
+    return (uint8_t)(7 + data_len);
+}
+
+static void test_cv_space_write_triggers_pom(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 42, false, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    /* Step 1: latch CV index 29 (big-endian 4 bytes at 0x7F000000). */
+    uint8_t pkt[16];
+    uint8_t idx_be[4] = { 0, 0, 0, 29 };
+    uint8_t len = mc_write(pkt, 0x7F000000u, idx_be, 4);
+    lcc_memconfig_handle(&n, 0x123, pkt, len);
+    assert(last_pom.calls == 0);         /* index latch doesn't POM */
+    assert(t.pom_cv_index == 29);
+
+    /* Step 2: write CV value 0x55 at 0x7F000004 → POM write. */
+    uint8_t val = 0x55;
+    len = mc_write(pkt, 0x7F000004u, &val, 1);
+    lcc_memconfig_handle(&n, 0x123, pkt, len);
+    assert(last_pom.calls == 1);
+    assert(last_pom.addr == 42);
+    assert(last_pom.is_long == false);
+    assert(last_pom.cv == 29);
+    assert(last_pom.value == 0x55);
+
+    printf("  PASS: CV space write triggers POM\n");
+}
+
+static void test_cv_space_long_address(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 3000, true, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    uint8_t pkt[16];
+    uint8_t idx_be[4] = { 0, 0, 0, 1 };       /* CV 1 */
+    uint8_t len = mc_write(pkt, 0x7F000000u, idx_be, 4);
+    lcc_memconfig_handle(&n, 0x123, pkt, len);
+
+    uint8_t val = 0x99;
+    len = mc_write(pkt, 0x7F000004u, &val, 1);
+    lcc_memconfig_handle(&n, 0x123, pkt, len);
+
+    assert(last_pom.calls == 1);
+    assert(last_pom.addr == 3000);
+    assert(last_pom.is_long == true);
+    assert(last_pom.cv == 1);
+    assert(last_pom.value == 0x99);
+
+    printf("  PASS: CV space honours long-address flag\n");
+}
+
+static void test_cv_space_value_before_index_is_noop(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 42, false, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    /* Write CV_VALUE without latching CV_INDEX first — drop silently. */
+    uint8_t pkt[16];
+    uint8_t val = 0x55;
+    uint8_t len = mc_write(pkt, 0x7F000004u, &val, 1);
+    lcc_memconfig_handle(&n, 0x123, pkt, len);
+
+    assert(last_pom.calls == 0);
+    printf("  PASS: CV space value-before-index is no-op\n");
+}
+
+static void test_cv_space_per_node_isolation(void) {
+    reset_all();
+    /* Two trains with distinct CV index state — writes to one must not
+     * leak to the other's POM. */
+    lcc_node_t n1; lcc_train_state_t t1;
+    init_node_with_train(&n1, &t1, 10, false, 0x111);
+    lcc_traction_register_cv_space(&n1);
+
+    lcc_node_t n2; lcc_train_state_t t2;
+    init_node_with_train(&n2, &t2, 20, false, 0x222);
+    lcc_traction_register_cv_space(&n2);
+
+    uint8_t pkt[16];
+    uint8_t idx_be[4] = { 0, 0, 0, 7 };       /* n1 gets CV 7 */
+    uint8_t len = mc_write(pkt, 0x7F000000u, idx_be, 4);
+    lcc_memconfig_handle(&n1, 0x123, pkt, len);
+
+    idx_be[3] = 99;                            /* n2 gets CV 99 */
+    len = mc_write(pkt, 0x7F000000u, idx_be, 4);
+    lcc_memconfig_handle(&n2, 0x123, pkt, len);
+
+    assert(t1.pom_cv_index == 7);
+    assert(t2.pom_cv_index == 99);
+
+    /* POM on n1 must use CV 7, not 99. */
+    uint8_t val = 0xAA;
+    len = mc_write(pkt, 0x7F000004u, &val, 1);
+    lcc_memconfig_handle(&n1, 0x123, pkt, len);
+    assert(last_pom.calls == 1);
+    assert(last_pom.addr == 10);
+    assert(last_pom.cv == 7);
+
+    printf("  PASS: CV space is per-node isolated\n");
+}
+
+static void test_cv_space_get_space_info(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 42, false, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    /* GET_SPACE_INFO 0x84 for space 0xF8 → node's handler wins, reply
+     * reports highest-address = 0x7F000006 and read-only = 0. */
+    uint8_t pkt[3] = { 0x20, 0x84, 0xF8 };
+    lcc_memconfig_handle(&n, 0x123, pkt, sizeof(pkt));
+
+    assert(last_datagram.calls == 1);
+    assert(last_datagram.len == 8);
+    assert(last_datagram.data[0] == 0x20);
+    assert(last_datagram.data[1] == 0x87);        /* SPACE_INFO_REPLY */
+    assert(last_datagram.data[2] == 0xF8);
+    /* highest = 0x7F000006 */
+    assert(last_datagram.data[3] == 0x7F);
+    assert(last_datagram.data[4] == 0x00);
+    assert(last_datagram.data[5] == 0x00);
+    assert(last_datagram.data[6] == 0x06);
+    assert(last_datagram.data[7] == 0x00);        /* flags: writable */
+
+    printf("  PASS: CV space GET_SPACE_INFO reply\n");
+}
+
 int main(void) {
     printf("test_lcc_traction:\n");
     test_set_speed_forward();
@@ -514,6 +711,11 @@ int main(void) {
     test_consist_attach_query_detach();
     test_addressed_reassembly();
     test_hooks_null_detach();
+    test_cv_space_write_triggers_pom();
+    test_cv_space_long_address();
+    test_cv_space_value_before_index_is_noop();
+    test_cv_space_per_node_isolation();
+    test_cv_space_get_space_info();
     printf("All LCC traction tests passed.\n");
     return 0;
 }
