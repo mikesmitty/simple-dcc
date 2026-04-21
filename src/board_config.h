@@ -24,6 +24,11 @@
 #define MAX_CURRENT_MAIN_MA 2000
 #define MAX_CURRENT_PROG_MA 250
 
+// ---- OLED display (128x64 I2C SSD1306) defaults ----
+#define DISPLAY_DEFAULT_SDA       20
+#define DISPLAY_DEFAULT_SCL       21
+#define DISPLAY_DEFAULT_I2C_ADDR  0x3C
+
 // ---- DCC engine limits ----
 #define MAX_LOCOS           50
 #define PACKET_POOL_SIZE    80

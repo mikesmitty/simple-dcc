@@ -108,6 +108,7 @@ add_executable(simple-dcc
     src/motor/motor.c
     src/track/track.c
     src/util/nv_storage.c
+    src/display/display.c
 )
 
 # --- PIO programs (must come after add_executable) ---
@@ -128,6 +129,7 @@ target_link_libraries(simple-dcc PRIVATE
     hardware_pio
     hardware_flash
     hardware_sync
+    hardware_i2c
     pico_flash
     pico_multicore
     FreeRTOS-Kernel-Heap4

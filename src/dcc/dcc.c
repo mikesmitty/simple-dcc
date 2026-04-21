@@ -8,6 +8,10 @@ void dcc_init(dcc_engine_t *dcc, QueueHandle_t output_queue) {
     dcc->mutex = xSemaphoreCreateMutex();
     configASSERT(dcc->mutex != NULL);
     dcc->output_queue = output_queue;
+    dcc->last_throttle_valid = false;
+    dcc->last_throttle_addr = 0;
+    dcc->last_throttle_is_long = false;
+    dcc->last_throttle_speed_step = 0;
 }
 
 // Helpers below must be called with dcc->mutex held.
@@ -156,6 +160,10 @@ void dcc_set_throttle(dcc_engine_t *dcc, uint16_t address, bool is_long,
         loco->speed_step = speed_step;
         snapshot_mode = loco->speed_mode;
         snapshot_long = loco->is_long_address;
+        dcc->last_throttle_valid = true;
+        dcc->last_throttle_addr = address;
+        dcc->last_throttle_is_long = snapshot_long;
+        dcc->last_throttle_speed_step = speed_step;
         ok = true;
     }
     xSemaphoreGive(dcc->mutex);
@@ -164,6 +172,20 @@ void dcc_set_throttle(dcc_engine_t *dcc, uint16_t address, bool is_long,
     dcc_packet_t *pkt = build_throttle_packet(address, snapshot_long,
                                               speed_step, snapshot_mode);
     send_packet(dcc, pkt);
+}
+
+bool dcc_get_last_throttle(dcc_engine_t *dcc, uint16_t *address,
+                           bool *is_long, uint8_t *speed_step) {
+    bool valid;
+    xSemaphoreTake(dcc->mutex, portMAX_DELAY);
+    valid = dcc->last_throttle_valid;
+    if (valid) {
+        if (address)    *address    = dcc->last_throttle_addr;
+        if (is_long)    *is_long    = dcc->last_throttle_is_long;
+        if (speed_step) *speed_step = dcc->last_throttle_speed_step;
+    }
+    xSemaphoreGive(dcc->mutex);
+    return valid;
 }
 
 void dcc_set_function(dcc_engine_t *dcc, uint16_t address, bool is_long,

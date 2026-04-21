@@ -74,4 +74,22 @@
 <int size="1"><name>ADC Channel</name><description>ADC channel used for current sensing.</description></int>
 </group>
 </segment>
+
+<segment origin="143" space="253">
+<name>OLED Display</name>
+<description>128x64 I2C OLED (SSD1306). Pin numbers must be a valid RP2350 I2C pair: SDA on GPIO 0/4/.../20 (I2C0) or 2/6/.../22 (I2C1), with SCL = SDA+1. Changes take effect after reboot.</description>
+<group>
+<int size="1"><name>SDA Pin</name><description>GPIO pin for I2C data.</description></int>
+<int size="1"><name>SCL Pin</name><description>GPIO pin for I2C clock. Must be SDA+1 on the same I2C peripheral.</description></int>
+<int size="1"><name>I2C Address</name><description>7-bit SSD1306 address. Most panels are 0x3C (60); some strap to 0x3D (61).</description></int>
+<int size="1">
+<name>Enabled</name>
+<description>When disabled, the display is not initialized and its task is not created.</description>
+<map>
+<relation><property>0</property><value>Disabled</value></relation>
+<relation><property>1</property><value>Enabled</value></relation>
+</map>
+</int>
+</group>
+</segment>
 </cdi>

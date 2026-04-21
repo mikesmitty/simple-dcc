@@ -82,6 +82,10 @@ static const lcc_snip_t  g_train_snip = {
 #define CONFIG_OFFSET_PROG_LIMIT  131   // 2 bytes
 #define CONFIG_OFFSET_PINS_MAIN   133   // 5 bytes (Signal, Power, Brake, Fault, ADC)
 #define CONFIG_OFFSET_PINS_PROG   138   // 5 bytes (Signal, Power, Brake, Fault, ADC)
+#define CONFIG_OFFSET_DISPLAY_SDA 143
+#define CONFIG_OFFSET_DISPLAY_SCL 144
+#define CONFIG_OFFSET_DISPLAY_ADDR 145
+#define CONFIG_OFFSET_DISPLAY_EN  146
 #define CONFIG_MEM_SIZE           0x0200
 
 static uint8_t cs_config_mem[CONFIG_MEM_SIZE] __attribute__((aligned(256)));
@@ -107,6 +111,11 @@ static void config_mem_init_defaults(void) {
     cs_config_mem[CONFIG_OFFSET_PINS_PROG+2] = PIN_BRAKE_B;
     cs_config_mem[CONFIG_OFFSET_PINS_PROG+3] = PIN_FAULT_B;
     cs_config_mem[CONFIG_OFFSET_PINS_PROG+4] = ADC_CHANNEL_B;
+
+    cs_config_mem[CONFIG_OFFSET_DISPLAY_SDA]  = DISPLAY_DEFAULT_SDA;
+    cs_config_mem[CONFIG_OFFSET_DISPLAY_SCL]  = DISPLAY_DEFAULT_SCL;
+    cs_config_mem[CONFIG_OFFSET_DISPLAY_ADDR] = DISPLAY_DEFAULT_I2C_ADDR;
+    cs_config_mem[CONFIG_OFFSET_DISPLAY_EN]   = 1;
 }
 
 static void mark_config_dirty(void) {
@@ -337,6 +346,10 @@ uint64_t lcc_interface_get_train_node_id_base(void) {
     return g_train_node_id_base;
 }
 
+uint64_t lcc_interface_get_cs_node_id(void) {
+    return g_cs_node.id;
+}
+
 // --- Configuration getters ---
 
 bool lcc_interface_railcom_enabled(void) {
@@ -367,6 +380,13 @@ void lcc_interface_get_pins_prog(uint8_t *sig, uint8_t *pwr, uint8_t *brk, uint8
     if (adc) *adc = cs_config_mem[CONFIG_OFFSET_PINS_PROG+4];
 }
 
+void lcc_interface_get_display(uint8_t *sda, uint8_t *scl, uint8_t *i2c_addr, bool *enabled) {
+    if (sda)      *sda      = cs_config_mem[CONFIG_OFFSET_DISPLAY_SDA];
+    if (scl)      *scl      = cs_config_mem[CONFIG_OFFSET_DISPLAY_SCL];
+    if (i2c_addr) *i2c_addr = cs_config_mem[CONFIG_OFFSET_DISPLAY_ADDR];
+    if (enabled)  *enabled  = cs_config_mem[CONFIG_OFFSET_DISPLAY_EN] != 0;
+}
+
 void lcc_interface_load_config(void) {
     // Load config from flash, or init to defaults if flash is empty.
     // Runs before the scheduler starts, so plain assignment to cs_config_dirty
@@ -381,8 +401,10 @@ void lcc_interface_load_config(void) {
         // this flash was likely from an older version. Populate with new defaults.
         uint16_t main_limit = (uint16_t)((cs_config_mem[CONFIG_OFFSET_MAIN_LIMIT] << 8) | cs_config_mem[CONFIG_OFFSET_MAIN_LIMIT+1]);
         uint8_t sig_pin = cs_config_mem[CONFIG_OFFSET_PINS_MAIN];
-        if (main_limit == 0 || sig_pin == 0) {
-            DBG("[NV] old or incomplete config detected (limit=%d, sig=%d), applying new defaults\n", main_limit, sig_pin);
+        uint8_t disp_addr = cs_config_mem[CONFIG_OFFSET_DISPLAY_ADDR];
+        if (main_limit == 0 || sig_pin == 0 || disp_addr == 0) {
+            DBG("[NV] old or incomplete config detected (limit=%d, sig=%d, disp_addr=%d), applying new defaults\n",
+                main_limit, sig_pin, disp_addr);
             config_mem_init_defaults();
             cs_config_dirty = true;
         }

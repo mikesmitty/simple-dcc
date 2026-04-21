@@ -13,6 +13,7 @@
 #include "protocol/lcc_interface.h"
 #include "motor/motor.h"
 #include "track/track.h"
+#include "display/display.h"
 
 #define WAVEGEN_QUEUE_DEPTH  8
 #define PQUEUE_INPUT_DEPTH  16
@@ -136,6 +137,16 @@ int main(void) {
     lcc_interface_init(&dcc_engine, &track_main, pqueue_input_queue);
     printf("[INIT] LCC interface ready\n");
 
+    // Init OLED display — pulls pin/address/enabled from config. A failure
+    // here is non-fatal; task_display idles if the hardware isn't ready.
+    uint8_t disp_sda, disp_scl, disp_addr;
+    bool    disp_enabled;
+    lcc_interface_get_display(&disp_sda, &disp_scl, &disp_addr, &disp_enabled);
+    bool display_ok = display_init(disp_sda, disp_scl, disp_addr, disp_enabled,
+                                   &motor_a, &motor_b, &dcc_engine,
+                                   LCC_SW_VERSION,
+                                   lcc_interface_get_cs_node_id());
+
     // Create tasks (highest priority first)
     xTaskCreate(task_wavegen,        "wavegen",   512,  &wavegen,         6, NULL);
     xTaskCreate(task_priority_queue, "pqueue",    512,  &pqueue,          5, NULL);
@@ -143,6 +154,9 @@ int main(void) {
     xTaskCreate(task_dcc_reminder,   "reminder",  512,  &dcc_engine,      3, NULL);
     xTaskCreate(task_protocol,       "protocol",  1024, NULL,             2, NULL);
     xTaskCreate(task_serial,         "serial",    1024, NULL,             1, NULL);
+    if (display_ok) {
+        xTaskCreate(task_display,    "display",   1024, NULL,             1, NULL);
+    }
     printf("[INIT] tasks created, starting scheduler\n");
 
     vTaskStartScheduler();

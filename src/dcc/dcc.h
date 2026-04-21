@@ -49,6 +49,12 @@ typedef struct {
     loop_state_t     loop_state;
     SemaphoreHandle_t mutex;
     QueueHandle_t    output_queue; // sends packets to priority queue
+
+    // Most recent throttle command, for UI display. Updated under mutex.
+    bool     last_throttle_valid;
+    uint16_t last_throttle_addr;
+    bool     last_throttle_is_long;
+    uint8_t  last_throttle_speed_step; // bit 7 = direction, 6-0 = speed
 } dcc_engine_t;
 
 void dcc_init(dcc_engine_t *dcc, QueueHandle_t output_queue);
@@ -71,6 +77,11 @@ void dcc_emergency_stop_all(dcc_engine_t *dcc);
 
 // Reminder loop (called periodically from task_dcc_reminder)
 void dcc_update(dcc_engine_t *dcc);
+
+// Reports the most recent throttle command, if any. Returns false if no
+// throttle has been issued since boot.
+bool dcc_get_last_throttle(dcc_engine_t *dcc, uint16_t *address,
+                           bool *is_long, uint8_t *speed_step);
 
 // FreeRTOS task
 void task_dcc_reminder(void *params);

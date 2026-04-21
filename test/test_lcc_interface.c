@@ -237,6 +237,10 @@ static void test_config_migration(void) {
     assert(cs_config_mem[CONFIG_OFFSET_AUTO_CLAIM] == 1);
     assert(lcc_interface_main_limit_ma() == MAX_CURRENT_MAIN_MA);
     assert(cs_config_mem[CONFIG_OFFSET_PINS_MAIN] == PIN_SIGNAL_A);
+    assert(cs_config_mem[CONFIG_OFFSET_DISPLAY_SDA]  == DISPLAY_DEFAULT_SDA);
+    assert(cs_config_mem[CONFIG_OFFSET_DISPLAY_SCL]  == DISPLAY_DEFAULT_SCL);
+    assert(cs_config_mem[CONFIG_OFFSET_DISPLAY_ADDR] == DISPLAY_DEFAULT_I2C_ADDR);
+    assert(cs_config_mem[CONFIG_OFFSET_DISPLAY_EN]   == 1);
 
     /* "Old" flash: auto-claim present but no limits/pins — migration
      * should overwrite with defaults. */
@@ -259,6 +263,7 @@ static void test_config_migration(void) {
     nv_data[CONFIG_OFFSET_MAIN_LIMIT]     = (MAX_CURRENT_MAIN_MA >> 8) & 0xFF;
     nv_data[CONFIG_OFFSET_MAIN_LIMIT + 1] = MAX_CURRENT_MAIN_MA & 0xFF;
     nv_data[CONFIG_OFFSET_PINS_MAIN]      = PIN_SIGNAL_A;
+    nv_data[CONFIG_OFFSET_DISPLAY_ADDR]   = DISPLAY_DEFAULT_I2C_ADDR;
     cs_config_dirty = false;
 
     lcc_interface_load_config();
