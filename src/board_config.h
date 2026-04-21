@@ -29,6 +29,18 @@
 #define DISPLAY_DEFAULT_SCL       21
 #define DISPLAY_DEFAULT_I2C_ADDR  0x3C
 
+// ---- MCP2515 CAN controller defaults (spi1 pin cluster, clear of the
+//      EX-MotorShield8874 and OLED pins; change via CDI to match wiring) ----
+#define MCP2515_DEFAULT_ENABLED   0   // opt-in: don't touch SPI if the chip isn't present
+#define MCP2515_DEFAULT_SPI_INST  1   // 0 = spi0, 1 = spi1
+#define MCP2515_DEFAULT_MISO      12
+#define MCP2515_DEFAULT_MOSI      15
+#define MCP2515_DEFAULT_SCK       14
+#define MCP2515_DEFAULT_CS        13
+#define MCP2515_DEFAULT_INT       24
+#define MCP2515_DEFAULT_CRYSTAL   1   // 0 = 8 MHz, 1 = 16 MHz
+#define MCP2515_DEFAULT_BITRATE   0   // 0 = 125k, 1 = 250k, 2 = 500k, 3 = 1M
+
 // ---- DCC engine limits ----
 #define MAX_LOCOS           50
 #define PACKET_POOL_SIZE    80

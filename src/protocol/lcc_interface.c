@@ -12,6 +12,8 @@
 #include "lcc/lcc_events.h"
 #include "lcc/lcc_traction.h"
 #include "lcc/lcc_train_search.h"
+#include "mcp2515/mcp2515_lcc.h"
+#include "hardware/spi.h"
 #include "cdi_data.h"
 
 #include "FreeRTOS.h"
@@ -86,6 +88,15 @@ static const lcc_snip_t  g_train_snip = {
 #define CONFIG_OFFSET_DISPLAY_SCL 144
 #define CONFIG_OFFSET_DISPLAY_ADDR 145
 #define CONFIG_OFFSET_DISPLAY_EN  146
+#define CONFIG_OFFSET_MCP_EN      147
+#define CONFIG_OFFSET_MCP_SPI     148
+#define CONFIG_OFFSET_MCP_MISO    149
+#define CONFIG_OFFSET_MCP_MOSI    150
+#define CONFIG_OFFSET_MCP_SCK     151
+#define CONFIG_OFFSET_MCP_CS      152
+#define CONFIG_OFFSET_MCP_INT     153
+#define CONFIG_OFFSET_MCP_XTAL    154
+#define CONFIG_OFFSET_MCP_BAUD    155
 #define CONFIG_MEM_SIZE           0x0200
 
 static uint8_t cs_config_mem[CONFIG_MEM_SIZE] __attribute__((aligned(256)));
@@ -116,6 +127,16 @@ static void config_mem_init_defaults(void) {
     cs_config_mem[CONFIG_OFFSET_DISPLAY_SCL]  = DISPLAY_DEFAULT_SCL;
     cs_config_mem[CONFIG_OFFSET_DISPLAY_ADDR] = DISPLAY_DEFAULT_I2C_ADDR;
     cs_config_mem[CONFIG_OFFSET_DISPLAY_EN]   = 1;
+
+    cs_config_mem[CONFIG_OFFSET_MCP_EN]    = MCP2515_DEFAULT_ENABLED;
+    cs_config_mem[CONFIG_OFFSET_MCP_SPI]   = MCP2515_DEFAULT_SPI_INST;
+    cs_config_mem[CONFIG_OFFSET_MCP_MISO]  = MCP2515_DEFAULT_MISO;
+    cs_config_mem[CONFIG_OFFSET_MCP_MOSI]  = MCP2515_DEFAULT_MOSI;
+    cs_config_mem[CONFIG_OFFSET_MCP_SCK]   = MCP2515_DEFAULT_SCK;
+    cs_config_mem[CONFIG_OFFSET_MCP_CS]    = MCP2515_DEFAULT_CS;
+    cs_config_mem[CONFIG_OFFSET_MCP_INT]   = MCP2515_DEFAULT_INT;
+    cs_config_mem[CONFIG_OFFSET_MCP_XTAL]  = MCP2515_DEFAULT_CRYSTAL;
+    cs_config_mem[CONFIG_OFFSET_MCP_BAUD]  = MCP2515_DEFAULT_BITRATE;
 }
 
 static void mark_config_dirty(void) {
@@ -387,6 +408,21 @@ void lcc_interface_get_display(uint8_t *sda, uint8_t *scl, uint8_t *i2c_addr, bo
     if (enabled)  *enabled  = cs_config_mem[CONFIG_OFFSET_DISPLAY_EN] != 0;
 }
 
+void lcc_interface_get_mcp2515(bool *enabled, uint8_t *spi_instance,
+                               uint8_t *miso, uint8_t *mosi, uint8_t *sck,
+                               uint8_t *cs, uint8_t *intr,
+                               uint8_t *crystal, uint8_t *bitrate) {
+    if (enabled)      *enabled      = cs_config_mem[CONFIG_OFFSET_MCP_EN] != 0;
+    if (spi_instance) *spi_instance = cs_config_mem[CONFIG_OFFSET_MCP_SPI];
+    if (miso)         *miso         = cs_config_mem[CONFIG_OFFSET_MCP_MISO];
+    if (mosi)         *mosi         = cs_config_mem[CONFIG_OFFSET_MCP_MOSI];
+    if (sck)          *sck          = cs_config_mem[CONFIG_OFFSET_MCP_SCK];
+    if (cs)           *cs           = cs_config_mem[CONFIG_OFFSET_MCP_CS];
+    if (intr)         *intr         = cs_config_mem[CONFIG_OFFSET_MCP_INT];
+    if (crystal)      *crystal      = cs_config_mem[CONFIG_OFFSET_MCP_XTAL];
+    if (bitrate)      *bitrate      = cs_config_mem[CONFIG_OFFSET_MCP_BAUD];
+}
+
 void lcc_interface_load_config(void) {
     // Load config from flash, or init to defaults if flash is empty.
     // Runs before the scheduler starts, so plain assignment to cs_config_dirty
@@ -406,6 +442,21 @@ void lcc_interface_load_config(void) {
             DBG("[NV] old or incomplete config detected (limit=%d, sig=%d, disp_addr=%d), applying new defaults\n",
                 main_limit, sig_pin, disp_addr);
             config_mem_init_defaults();
+            cs_config_dirty = true;
+        } else if (cs_config_mem[CONFIG_OFFSET_MCP_SCK] == 0) {
+            /* Partial migration: pre-MCP2515 flash images have zeroes in
+             * the MCP config slots. Seed just those fields without
+             * touching the user's display/motor/traction settings. */
+            DBG("[NV] seeding MCP2515 defaults into existing config\n");
+            cs_config_mem[CONFIG_OFFSET_MCP_EN]    = MCP2515_DEFAULT_ENABLED;
+            cs_config_mem[CONFIG_OFFSET_MCP_SPI]   = MCP2515_DEFAULT_SPI_INST;
+            cs_config_mem[CONFIG_OFFSET_MCP_MISO]  = MCP2515_DEFAULT_MISO;
+            cs_config_mem[CONFIG_OFFSET_MCP_MOSI]  = MCP2515_DEFAULT_MOSI;
+            cs_config_mem[CONFIG_OFFSET_MCP_SCK]   = MCP2515_DEFAULT_SCK;
+            cs_config_mem[CONFIG_OFFSET_MCP_CS]    = MCP2515_DEFAULT_CS;
+            cs_config_mem[CONFIG_OFFSET_MCP_INT]   = MCP2515_DEFAULT_INT;
+            cs_config_mem[CONFIG_OFFSET_MCP_XTAL]  = MCP2515_DEFAULT_CRYSTAL;
+            cs_config_mem[CONFIG_OFFSET_MCP_BAUD]  = MCP2515_DEFAULT_BITRATE;
             cs_config_dirty = true;
         }
     }
@@ -493,6 +544,43 @@ static lcc_node_t *train_allocator(uint16_t dcc_addr, uint8_t flags,
     if (g_dcc_engine)
         dcc_ensure_loco(g_dcc_engine, dcc_addr, is_long);
     return node;
+}
+
+// --- MCP2515 CAN transport bring-up ------------------------------------
+// Reads the CDI-backed config; if the chip is enabled, picks the SPI
+// instance and fires up the driver + glue. Anything that fails here
+// is logged and bypassed — USB stays functional so the user can still
+// reach CDI to fix the config.
+
+static mcp2515_config_t g_mcp_cfg;
+
+static void lcc_interface_maybe_start_mcp2515(void) {
+    bool enabled = false;
+    uint8_t spi_sel = 0, miso = 0, mosi = 0, sck = 0, cs = 0, intr = 0;
+    uint8_t xtal = 0, baud = 0;
+    lcc_interface_get_mcp2515(&enabled, &spi_sel, &miso, &mosi, &sck,
+                              &cs, &intr, &xtal, &baud);
+    if (!enabled) return;
+
+    g_mcp_cfg.spi      = (spi_sel == 1) ? spi1 : spi0;
+    g_mcp_cfg.pin_miso = miso;
+    g_mcp_cfg.pin_mosi = mosi;
+    g_mcp_cfg.pin_sck  = sck;
+    g_mcp_cfg.pin_cs   = cs;
+    g_mcp_cfg.pin_int  = intr;
+    g_mcp_cfg.crystal  = (xtal == 1) ? MCP2515_CRYSTAL_16MHZ : MCP2515_CRYSTAL_8MHZ;
+    /* Clamp bitrate to the enum range; anything unexpected falls back
+     * to 125k (OpenLCB standard). */
+    g_mcp_cfg.bitrate  = (baud <= MCP2515_BITRATE_1M)
+                         ? (mcp2515_bitrate_t)baud
+                         : MCP2515_BITRATE_125K;
+
+    if (!mcp2515_lcc_start(&g_mcp_cfg)) {
+        DBG("[LCC] MCP2515 start failed — USB remains as sole transport\n");
+    } else {
+        DBG("[LCC] MCP2515 on spi%d, INT=GPIO%d, bitrate idx=%d\n",
+            spi_sel, intr, baud);
+    }
 }
 
 // --- Emergency event handling -----------------------------------------
@@ -583,6 +671,12 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
                         LCC_EVENT_CONSUMER, handle_emergency_event);
     lcc_events_register(&g_cs_node, LCC_EVENT_CLEAR_EMERG_STOP,
                         LCC_EVENT_CONSUMER, handle_emergency_event);
+
+    /* Optional second LCC transport: MCP2515 CAN controller over SPI.
+     * lcc_task_init() above already called lcc_if_init() which registered
+     * USB as the first egress; this adds CAN as a second egress if the
+     * user has enabled it in CDI. */
+    lcc_interface_maybe_start_mcp2515();
 }
 
 void task_protocol(void *params) {

@@ -51,9 +51,28 @@ target_include_directories(test_lcc_interface PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/../src
 )
 
+add_executable(test_lcc_if_multitransport
+    test_lcc_if_multitransport.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/lcc/lcc_gc.c
+)
+target_include_directories(test_lcc_if_multitransport PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+)
+
+add_executable(test_mcp2515_framing
+    test_mcp2515_framing.c
+)
+target_include_directories(test_mcp2515_framing PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+)
+
 enable_testing()
 add_test(NAME test_packet COMMAND test_packet)
 add_test(NAME test_priority_queue_logic COMMAND test_priority_queue_logic)
 add_test(NAME test_functions COMMAND test_functions)
 add_test(NAME test_lcc_traction COMMAND test_lcc_traction)
 add_test(NAME test_lcc_interface COMMAND test_lcc_interface)
+add_test(NAME test_lcc_if_multitransport COMMAND test_lcc_if_multitransport)
+add_test(NAME test_mcp2515_framing COMMAND test_mcp2515_framing)

@@ -92,4 +92,50 @@
 </int>
 </group>
 </segment>
+
+<segment origin="147" space="253">
+<name>MCP2515 CAN</name>
+<description>Optional MCP2515 CAN controller over SPI, used as a second LCC transport alongside USB. Pin numbers must be a valid RP2350 SPI set for the selected peripheral. Changes take effect after reboot.</description>
+<group>
+<int size="1">
+<name>Enabled</name>
+<description>When disabled, SPI stays idle and no second LCC transport is created.</description>
+<map>
+<relation><property>0</property><value>Disabled</value></relation>
+<relation><property>1</property><value>Enabled</value></relation>
+</map>
+</int>
+<int size="1">
+<name>SPI Peripheral</name>
+<description>Which on-chip SPI instance to drive the MCP2515.</description>
+<map>
+<relation><property>0</property><value>spi0</value></relation>
+<relation><property>1</property><value>spi1</value></relation>
+</map>
+</int>
+<int size="1"><name>MISO Pin</name><description>GPIO pin for SPI MISO.</description></int>
+<int size="1"><name>MOSI Pin</name><description>GPIO pin for SPI MOSI.</description></int>
+<int size="1"><name>SCK Pin</name><description>GPIO pin for SPI clock.</description></int>
+<int size="1"><name>CS Pin</name><description>GPIO pin driving the MCP2515 chip-select (active low).</description></int>
+<int size="1"><name>INT Pin</name><description>GPIO pin tied to the MCP2515 /INT output; used as a falling-edge IRQ source.</description></int>
+<int size="1">
+<name>Crystal</name>
+<description>Oscillator fitted on the MCP2515 module.</description>
+<map>
+<relation><property>0</property><value>8 MHz</value></relation>
+<relation><property>1</property><value>16 MHz</value></relation>
+</map>
+</int>
+<int size="1">
+<name>Bit Rate</name>
+<description>CAN bus bit rate. OpenLCB standard is 125 kbps.</description>
+<map>
+<relation><property>0</property><value>125 kbps</value></relation>
+<relation><property>1</property><value>250 kbps</value></relation>
+<relation><property>2</property><value>500 kbps</value></relation>
+<relation><property>3</property><value>1 Mbps</value></relation>
+</map>
+</int>
+</group>
+</segment>
 </cdi>

@@ -109,6 +109,8 @@ add_executable(simple-dcc
     src/track/track.c
     src/util/nv_storage.c
     src/display/display.c
+    src/mcp2515/mcp2515.c
+    src/mcp2515/mcp2515_lcc.c
 )
 
 # --- PIO programs (must come after add_executable) ---
@@ -130,6 +132,7 @@ target_link_libraries(simple-dcc PRIVATE
     hardware_flash
     hardware_sync
     hardware_i2c
+    hardware_spi
     pico_flash
     pico_multicore
     FreeRTOS-Kernel-Heap4

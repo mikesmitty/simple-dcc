@@ -163,6 +163,14 @@ bool lcc_events_register(lcc_node_t *node, uint64_t event_id, uint8_t flags,
     return true;
 }
 
+/* ---- MCP2515 LCC transport stub ----------------------------------------- */
+
+/* lcc_interface_maybe_start_mcp2515() is called from init if the CDI
+ * "enabled" flag is set. Host tests never enable it, so this stub is
+ * only needed to satisfy the linker. */
+#include "mcp2515/mcp2515_lcc.h"
+bool mcp2515_lcc_start(const mcp2515_config_t *cfg) { (void)cfg; return true; }
+
 /* ---- CDI blob stub ------------------------------------------------------ */
 
 /* Real _cdi_data is generated from cdi.xml. The test only asserts that
@@ -256,7 +264,8 @@ static void test_config_migration(void) {
     assert(cs_config_mem[CONFIG_OFFSET_PINS_MAIN] == PIN_SIGNAL_A);
 
     /* "Recent" flash: values already populated — migration leaves them
-     * alone and does NOT re-dirty. */
+     * alone and does NOT re-dirty. Includes MCP2515 SCK so the partial
+     * MCP migration doesn't fire. */
     nv_initialized = true;
     memset(nv_data, 0, sizeof(nv_data));
     nv_data[CONFIG_OFFSET_RAILCOM] = 0;      /* non-default on purpose */
@@ -264,11 +273,31 @@ static void test_config_migration(void) {
     nv_data[CONFIG_OFFSET_MAIN_LIMIT + 1] = MAX_CURRENT_MAIN_MA & 0xFF;
     nv_data[CONFIG_OFFSET_PINS_MAIN]      = PIN_SIGNAL_A;
     nv_data[CONFIG_OFFSET_DISPLAY_ADDR]   = DISPLAY_DEFAULT_I2C_ADDR;
+    nv_data[CONFIG_OFFSET_MCP_SCK]        = MCP2515_DEFAULT_SCK;
     cs_config_dirty = false;
 
     lcc_interface_load_config();
     assert(cs_config_dirty == false);
     assert(cs_config_mem[CONFIG_OFFSET_RAILCOM] == 0);
+
+    /* Pre-MCP flash (v0.4.0 and earlier): MCP_SCK == 0 triggers the
+     * partial MCP-only migration — other user values preserved, but
+     * dirty-bit set so the fresh MCP defaults get written back. */
+    nv_initialized = true;
+    memset(nv_data, 0, sizeof(nv_data));
+    nv_data[CONFIG_OFFSET_RAILCOM]        = 0;
+    nv_data[CONFIG_OFFSET_MAIN_LIMIT]     = (MAX_CURRENT_MAIN_MA >> 8) & 0xFF;
+    nv_data[CONFIG_OFFSET_MAIN_LIMIT + 1] = MAX_CURRENT_MAIN_MA & 0xFF;
+    nv_data[CONFIG_OFFSET_PINS_MAIN]      = PIN_SIGNAL_A;
+    nv_data[CONFIG_OFFSET_DISPLAY_ADDR]   = DISPLAY_DEFAULT_I2C_ADDR;
+    /* MCP_SCK left at 0 to trigger migration */
+    cs_config_dirty = false;
+
+    lcc_interface_load_config();
+    assert(cs_config_dirty == true);
+    assert(cs_config_mem[CONFIG_OFFSET_RAILCOM] == 0);  /* user value preserved */
+    assert(cs_config_mem[CONFIG_OFFSET_MCP_SCK] == MCP2515_DEFAULT_SCK);
+    assert(cs_config_mem[CONFIG_OFFSET_MCP_EN]  == MCP2515_DEFAULT_ENABLED);
 
     printf("  PASS: config migration\n");
 }

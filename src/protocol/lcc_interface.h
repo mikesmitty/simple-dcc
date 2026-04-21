@@ -38,4 +38,13 @@ void lcc_interface_get_pins_prog(uint8_t *sig, uint8_t *pwr, uint8_t *brk, uint8
 // Returns the OLED display config.
 void lcc_interface_get_display(uint8_t *sda, uint8_t *scl, uint8_t *i2c_addr, bool *enabled);
 
+// Returns the MCP2515 CAN controller config. Out-params may be NULL if the
+// caller doesn't need that field. `enabled` false means "leave SPI idle".
+// `spi_instance` is 0 for spi0 and 1 for spi1. `crystal` is 0 for 8 MHz and
+// 1 for 16 MHz. `bitrate` is 0..3 for 125k/250k/500k/1M.
+void lcc_interface_get_mcp2515(bool *enabled, uint8_t *spi_instance,
+                               uint8_t *miso, uint8_t *mosi, uint8_t *sck,
+                               uint8_t *cs, uint8_t *intr,
+                               uint8_t *crystal, uint8_t *bitrate);
+
 #endif // LCC_INTERFACE_H

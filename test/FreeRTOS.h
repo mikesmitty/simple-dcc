@@ -18,7 +18,7 @@ typedef uint32_t TickType_t;
 #define portTICK_PERIOD_MS 1
 #define configASSERT(x) assert(x)
 
-static inline void xSemaphoreTake(SemaphoreHandle_t x, TickType_t t) {}
+static inline bool xSemaphoreTake(SemaphoreHandle_t x, TickType_t t) { (void)x; (void)t; return pdTRUE; }
 static inline void xSemaphoreGive(SemaphoreHandle_t x) {}
 static inline void xTimerReset(TimerHandle_t x, TickType_t t) {}
 static inline SemaphoreHandle_t xSemaphoreCreateMutex(void) { return (SemaphoreHandle_t)1; }

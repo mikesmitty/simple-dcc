@@ -16,31 +16,17 @@ static SemaphoreHandle_t  tx_mtx;
 static SemaphoreHandle_t  alias_mtx;
 static lcc_gc_parser_t    gc_parser;
 
-void lcc_if_init(void)
-{
-    rx_q      = xQueueCreate(LCC_IF_RX_Q_LEN, sizeof(lcc_frame_t));
-    tx_mtx    = xSemaphoreCreateMutex();
-    alias_mtx = xSemaphoreCreateMutex();
-    memset(&gc_parser, 0, sizeof(gc_parser));
-}
+static struct {
+    lcc_egress_fn fn;
+    void         *ctx;
+} egress_tbl[LCC_IF_MAX_EGRESS];
+static uint8_t egress_count;
 
-void lcc_if_on_rx_byte(uint8_t ch)
+/* Built-in USB/GridConnect egress. Kept in this file so the existing
+ * lcc_if → serial dependency does not fan out to every transport. */
+static bool usb_egress(const lcc_frame_t *frame, void *ctx)
 {
-    lcc_frame_t frame;
-    if (lcc_gc_parse_byte(&gc_parser, (char)ch, &frame)) {
-        /* Drop on overflow — the bus is noisy; losing an un-consumed frame
-         * is preferable to blocking task_serial. */
-        (void)xQueueSend(rx_q, &frame, 0);
-    }
-}
-
-bool lcc_if_rx(lcc_frame_t *out, uint32_t timeout_ms)
-{
-    return xQueueReceive(rx_q, out, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
-}
-
-bool lcc_if_tx(const lcc_frame_t *frame)
-{
+    (void)ctx;
     if (!serial_write_ready()) {
         /* USB not connected: drop silently so the stack never stalls on
          * a missing host. */
@@ -52,10 +38,64 @@ bool lcc_if_tx(const lcc_frame_t *frame)
     if (n <= 0)
         return false;
 
-    xSemaphoreTake(tx_mtx, portMAX_DELAY);
     serial_write((const uint8_t *)buf, (uint16_t)n);
-    xSemaphoreGive(tx_mtx);
     return true;
+}
+
+void lcc_if_init(void)
+{
+    rx_q      = xQueueCreate(LCC_IF_RX_Q_LEN, sizeof(lcc_frame_t));
+    tx_mtx    = xSemaphoreCreateMutex();
+    alias_mtx = xSemaphoreCreateMutex();
+    memset(&gc_parser, 0, sizeof(gc_parser));
+
+    egress_count = 0;
+    (void)lcc_if_register_transport(usb_egress, NULL);
+}
+
+bool lcc_if_register_transport(lcc_egress_fn fn, void *ctx)
+{
+    if (!fn || egress_count >= LCC_IF_MAX_EGRESS)
+        return false;
+    egress_tbl[egress_count].fn  = fn;
+    egress_tbl[egress_count].ctx = ctx;
+    egress_count++;
+    return true;
+}
+
+void lcc_if_enqueue_frame(const lcc_frame_t *frame)
+{
+    /* Drop on overflow — the bus is noisy; losing an un-consumed frame
+     * is preferable to blocking the producing transport. */
+    (void)xQueueSend(rx_q, frame, 0);
+}
+
+void lcc_if_on_rx_byte(uint8_t ch)
+{
+    lcc_frame_t frame;
+    if (lcc_gc_parse_byte(&gc_parser, (char)ch, &frame)) {
+        lcc_if_enqueue_frame(&frame);
+    }
+}
+
+bool lcc_if_rx(lcc_frame_t *out, uint32_t timeout_ms)
+{
+    return xQueueReceive(rx_q, out, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+bool lcc_if_tx(const lcc_frame_t *frame)
+{
+    /* TX is serialized so egress implementations can assume exclusive
+     * access to their hardware state (e.g. MCP2515 TX buffers, the USB
+     * CDC byte stream). */
+    xSemaphoreTake(tx_mtx, portMAX_DELAY);
+    bool any_ok = false;
+    for (uint8_t i = 0; i < egress_count; i++) {
+        if (egress_tbl[i].fn(frame, egress_tbl[i].ctx))
+            any_ok = true;
+    }
+    xSemaphoreGive(tx_mtx);
+    return any_ok;
 }
 
 bool lcc_if_alias_try_lock(void)
