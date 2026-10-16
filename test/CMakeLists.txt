@@ -44,6 +44,25 @@ target_include_directories(test_lcc_traction PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/../src
 )
 
+add_executable(test_lcc_memconfig
+    test_lcc_memconfig.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/lcc/lcc_memconfig.c
+)
+target_include_directories(test_lcc_memconfig PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+)
+
+add_executable(test_svc_cv
+    test_svc_cv.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/servicemode/svc_cv.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/dcc/packet.c
+)
+target_include_directories(test_svc_cv PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+)
+
 add_executable(test_lcc_interface
     test_lcc_interface.c
 )
@@ -74,6 +93,8 @@ add_test(NAME test_packet COMMAND test_packet)
 add_test(NAME test_priority_queue_logic COMMAND test_priority_queue_logic)
 add_test(NAME test_functions COMMAND test_functions)
 add_test(NAME test_lcc_traction COMMAND test_lcc_traction)
+add_test(NAME test_lcc_memconfig COMMAND test_lcc_memconfig)
+add_test(NAME test_svc_cv COMMAND test_svc_cv)
 add_test(NAME test_lcc_interface COMMAND test_lcc_interface)
 add_test(NAME test_lcc_if_multitransport COMMAND test_lcc_if_multitransport)
 add_test(NAME test_mcp2515_framing COMMAND test_mcp2515_framing)

@@ -141,3 +141,30 @@ void packet_build_pom_write_byte(dcc_packet_t *pkt,
     pkt->priority = PRIORITY_HIGH;
     pkt->repeats  = repeats;
 }
+
+static void packet_build_svc_direct(dcc_packet_t *pkt, uint8_t opcode,
+                                    uint16_t cv, uint8_t value) {
+    packet_reset(pkt);
+    uint16_t wire_cv = (uint16_t)(cv - 1) & 0x3FF;
+    packet_add_byte(pkt, opcode | (uint8_t)((wire_cv >> 8) & 0x03));
+    packet_add_byte(pkt, (uint8_t)(wire_cv & 0xFF));
+    packet_add_byte(pkt, value);
+    pkt->address  = BROADCAST_ADDRESS;
+    pkt->priority = PRIORITY_EMERGENCY;
+    pkt->repeats  = 0;
+}
+
+void packet_build_svc_write_byte(dcc_packet_t *pkt, uint16_t cv, uint8_t value) {
+    packet_build_svc_direct(pkt, 0x7C, cv, value);
+}
+
+void packet_build_svc_verify_byte(dcc_packet_t *pkt, uint16_t cv, uint8_t value) {
+    packet_build_svc_direct(pkt, 0x74, cv, value);
+}
+
+void packet_build_svc_verify_bit(dcc_packet_t *pkt, uint16_t cv,
+                                 uint8_t bit, bool value) {
+    // Bit manipulation data byte: 111K_DBBB with K=0 (verify).
+    uint8_t data = (uint8_t)(0xE0 | (value ? 0x08 : 0x00) | (bit & 0x07));
+    packet_build_svc_direct(pkt, 0x78, cv, data);
+}

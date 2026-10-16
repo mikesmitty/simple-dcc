@@ -41,6 +41,23 @@ typedef uint16_t (*lcc_memspace_write_fn)(lcc_node_t *node,
  * (0xA8). Backing store may commit pending changes (e.g. flash flush). */
 typedef void (*lcc_memspace_update_fn)(lcc_node_t *node);
 
+/* A read or write handed to a space's `defer` hook. `data` points into the
+ * inbound datagram and is only valid for the duration of the call. */
+typedef struct {
+    bool           is_write;
+    uint8_t        space;
+    uint32_t       addr;
+    uint8_t        count;   /* read: bytes requested; write: bytes supplied */
+    const uint8_t *data;    /* write payload; NULL for reads */
+} lcc_memconfig_deferred_t;
+
+/* Start a read/write whose result arrives later (e.g. a Service Mode CV
+ * op on the programming track). Return 0 to accept — the owner must then
+ * call lcc_memconfig_complete() exactly once, from any task. Any other
+ * return value is an OpenLCB error code sent back immediately. */
+typedef uint16_t (*lcc_memspace_defer_fn)(lcc_node_t *node,
+                                          const lcc_memconfig_deferred_t *req);
+
 typedef struct lcc_memspace_handler {
     uint8_t                space;     /* 0xFF / 0xFE / 0xFD / 0xFC / 0xFB / 0xF8 */
     uint32_t               size;      /* bytes; highest-address reply = size-1 */
@@ -48,7 +65,15 @@ typedef struct lcc_memspace_handler {
     lcc_memspace_read_fn   read;
     lcc_memspace_write_fn  write;     /* may be NULL iff read_only */
     lcc_memspace_update_fn update_complete;  /* may be NULL */
+    /* When non-NULL, read/write are bypassed: requests are ACKed with
+     * Reply Pending and handed here instead. Only one deferred request is
+     * in flight stack-wide; others get a temporary error until it ends. */
+    lcc_memspace_defer_fn  defer;
 } lcc_memspace_handler_t;
+
+/* Timeout exponent advertised with Reply Pending for deferred requests:
+ * the requester waits 2^N seconds for the reply before retrying. */
+#define LCC_MEMCFG_DEFER_TIMEOUT_EXP  3
 
 /* Replace the current global space table. The referenced entries must
  * outlive the LCC stack (static storage). Intended to be called once
@@ -81,5 +106,25 @@ void lcc_memconfig_set_hooks(lcc_memconfig_reboot_fn reboot,
  * with the 0x20 protocol byte; `len` is its length. */
 void lcc_memconfig_handle(lcc_node_t *node, uint16_t src_alias,
                           const uint8_t *payload, uint8_t len);
+
+/* Flags byte for the Datagram OK that acknowledges `payload`: Reply
+ * Pending + LCC_MEMCFG_DEFER_TIMEOUT_EXP for reads/writes on a deferred
+ * space, 0 otherwise. Called by lcc_datagram before lcc_memconfig_handle. */
+uint8_t lcc_memconfig_ack_flags(const lcc_node_t *node,
+                                const uint8_t *payload, uint8_t len);
+
+/* Finish the in-flight deferred request. `error` 0 means success; for
+ * reads, `data`/`len` carry the bytes read. Safe from any task — the reply
+ * itself goes out from lcc_memconfig_flush_deferred(). Ignored if no
+ * deferred request is pending. */
+void lcc_memconfig_complete(uint16_t error, const uint8_t *data, uint8_t len);
+
+/* Send the reply for a completed deferred request, if any. Called from
+ * the LCC task loop so replies share that task's TX path. */
+void lcc_memconfig_flush_deferred(void);
+
+/* True from the moment a deferred request is accepted until its reply has
+ * gone out. The LCC task polls faster while this holds. */
+bool lcc_memconfig_deferred_pending(void);
 
 #endif /* LCC_MEMCONFIG_H */

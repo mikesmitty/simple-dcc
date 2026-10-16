@@ -45,6 +45,9 @@ void motor_set_power(motor_t *m, bool on);
 void motor_update(motor_t *m);
 bool motor_is_on(motor_t *m);
 
+// Raw current-sense ADC reading for this channel. Safe from any task.
+uint16_t motor_read_current_raw(motor_t *m);
+
 // Track monitor task data: array of motor pointers
 typedef struct {
     motor_t **motors;

@@ -81,6 +81,161 @@ static uint8_t decode_space(uint8_t cmd, const uint8_t *buf, uint8_t len,
     return (len > 6) ? buf[6] : (uint8_t)0;
 }
 
+/* ---- read/write replies ----------------------------------------------- */
+
+/* Build the Read Reply / Write Reply for a request whose sub-command byte
+ * was `cmd`. A nonzero `error` sets the failure bit and carries the code
+ * in place of data. Space encoding (low bits vs. explicit byte) mirrors
+ * the request so the requester can match it up. */
+static void send_reply(lcc_node_t *node, uint16_t dst_alias, uint8_t cmd,
+                       uint8_t space, uint32_t addr, uint16_t error,
+                       const uint8_t *data, uint8_t len)
+{
+    bool    is_write   = (cmd & 0xF0) == LCC_MEMCFG_WRITE;
+    uint8_t space_bits = cmd & 0x03;
+
+    uint8_t reply[LCC_DATAGRAM_MAX];
+    uint8_t rpos = 0;
+    reply[rpos++] = LCC_MEMCONFIG_CMD;
+    reply[rpos++] = (uint8_t)((is_write ? LCC_MEMCFG_WRITE_REPLY
+                                        : LCC_MEMCFG_READ_REPLY)
+                              | (error ? LCC_MEMCFG_REPLY_FAILED : 0)
+                              | space_bits);
+    reply[rpos++] = (uint8_t)((addr >> 24) & 0xFF);
+    reply[rpos++] = (uint8_t)((addr >> 16) & 0xFF);
+    reply[rpos++] = (uint8_t)((addr >>  8) & 0xFF);
+    reply[rpos++] = (uint8_t)( addr        & 0xFF);
+    if (space_bits == 0)
+        reply[rpos++] = space;
+
+    if (error) {
+        reply[rpos++] = (uint8_t)(error >> 8);
+        reply[rpos++] = (uint8_t)(error & 0xFF);
+    } else if (!is_write && data) {
+        uint8_t room = (uint8_t)(sizeof(reply) - rpos);
+        if (len > room) len = room;
+        memcpy(&reply[rpos], data, len);
+        rpos = (uint8_t)(rpos + len);
+    }
+
+    lcc_datagram_send(node, dst_alias, reply, rpos);
+}
+
+/* ---- deferred requests ------------------------------------------------ */
+
+/* One slot: the only deferred space today is the programming track, which
+ * can run a single CV op at a time anyway. State moves IDLE → PENDING on
+ * the LCC task, PENDING → DONE on whichever task finishes the op, and
+ * DONE → IDLE back on the LCC task once the reply is out. */
+enum {
+    DEFERRED_IDLE,
+    DEFERRED_PENDING,
+    DEFERRED_DONE,
+};
+
+static struct {
+    uint8_t     state;
+    lcc_node_t *node;
+    uint16_t    src_alias;
+    uint8_t     cmd;
+    uint8_t     space;
+    uint32_t    addr;
+    uint16_t    error;
+    uint8_t     len;
+    uint8_t     data[LCC_DATAGRAM_MAX - 7];  /* 7 = reply header w/ space byte */
+} g_deferred;
+
+static void start_deferred(lcc_node_t *node, uint16_t src_alias,
+                           uint8_t cmd, uint8_t space, uint32_t addr,
+                           uint8_t count, const uint8_t *data,
+                           const lcc_memspace_handler_t *h)
+{
+    uint16_t error;
+    if (addr >= h->size) {
+        error = LCC_ERR_OUT_OF_BOUNDS;
+    } else if (__atomic_load_n(&g_deferred.state, __ATOMIC_ACQUIRE)
+               != DEFERRED_IDLE) {
+        error = LCC_ERR_TEMPORARY;
+    } else {
+        g_deferred.node      = node;
+        g_deferred.src_alias = src_alias;
+        g_deferred.cmd       = cmd;
+        g_deferred.space     = space;
+        g_deferred.addr      = addr;
+        g_deferred.error     = 0;
+        g_deferred.len       = 0;
+        __atomic_store_n(&g_deferred.state, DEFERRED_PENDING, __ATOMIC_RELEASE);
+
+        lcc_memconfig_deferred_t req = {
+            .is_write = data != NULL,
+            .space    = space,
+            .addr     = addr,
+            .count    = count,
+            .data     = data,
+        };
+        error = h->defer(node, &req);
+        if (error == 0)
+            return;
+        __atomic_store_n(&g_deferred.state, DEFERRED_IDLE, __ATOMIC_RELEASE);
+    }
+    send_reply(node, src_alias, cmd, space, addr, error, NULL, 0);
+}
+
+void lcc_memconfig_complete(uint16_t error, const uint8_t *data, uint8_t len)
+{
+    if (__atomic_load_n(&g_deferred.state, __ATOMIC_ACQUIRE)
+        != DEFERRED_PENDING)
+        return;
+    if (len > sizeof(g_deferred.data))
+        len = sizeof(g_deferred.data);
+    if (data && len)
+        memcpy(g_deferred.data, data, len);
+    g_deferred.len   = data ? len : 0;
+    g_deferred.error = error;
+    __atomic_store_n(&g_deferred.state, DEFERRED_DONE, __ATOMIC_RELEASE);
+}
+
+void lcc_memconfig_flush_deferred(void)
+{
+    if (__atomic_load_n(&g_deferred.state, __ATOMIC_ACQUIRE) != DEFERRED_DONE)
+        return;
+    send_reply(g_deferred.node, g_deferred.src_alias, g_deferred.cmd,
+               g_deferred.space, g_deferred.addr, g_deferred.error,
+               g_deferred.data, g_deferred.len);
+    __atomic_store_n(&g_deferred.state, DEFERRED_IDLE, __ATOMIC_RELEASE);
+}
+
+bool lcc_memconfig_deferred_pending(void)
+{
+    return __atomic_load_n(&g_deferred.state, __ATOMIC_ACQUIRE)
+           != DEFERRED_IDLE;
+}
+
+uint8_t lcc_memconfig_ack_flags(const lcc_node_t *node,
+                                const uint8_t *payload, uint8_t len)
+{
+    if (len < 7)
+        return 0;
+    uint8_t kind = payload[1] & 0xF0;
+    if (kind != LCC_MEMCFG_READ && kind != LCC_MEMCFG_WRITE)
+        return 0;
+
+    uint32_t addr;
+    uint8_t  data_offset;
+    uint8_t  space = decode_space(payload[1], payload, len, &addr,
+                                  &data_offset);
+    /* Same validity checks as handle_read/handle_write: a request they
+     * drop must not promise a reply. */
+    if (data_offset >= len)
+        return 0;
+    if (kind == LCC_MEMCFG_READ && payload[data_offset] == 0)
+        return 0;
+    const lcc_memspace_handler_t *h = find_space(node, space);
+    if (!h || !h->defer)
+        return 0;
+    return LCC_DATAGRAM_OK_REPLY_PENDING | LCC_MEMCFG_DEFER_TIMEOUT_EXP;
+}
+
 /* ---- GET_SPACE_INFO --------------------------------------------------- */
 
 static void handle_get_space_info(lcc_node_t *node, uint16_t src_alias,
@@ -133,6 +288,10 @@ static void handle_read(lcc_node_t *node, uint16_t src_alias,
         return;
 
     const lcc_memspace_handler_t *h = find_space(node, space);
+    if (h && h->defer) {
+        start_deferred(node, src_alias, buf[1], space, addr, count, NULL, h);
+        return;
+    }
     if (!h || !h->read)
         return;
 
@@ -183,11 +342,16 @@ static void handle_write(lcc_node_t *node, uint16_t src_alias,
         return;
 
     const lcc_memspace_handler_t *h = find_space(node, space);
-    if (!h || h->read_only || !h->write)
-        return;
-
     uint8_t count = (uint8_t)(len - data_offset);
     const uint8_t *write_data = buf + data_offset;
+
+    if (h && h->defer) {
+        start_deferred(node, src_alias, buf[1], space, addr, count,
+                       write_data, h);
+        return;
+    }
+    if (!h || h->read_only || !h->write)
+        return;
 
     if (addr >= h->size)
         return;

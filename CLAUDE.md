@@ -39,12 +39,14 @@ cmake .. && make && ctest
 | 3 | task_dcc_reminder | Cycle speed + function reminders |
 | 2 | task_protocol | Pump LCC RX queue + 100 ms alias/flush tick |
 | 1 | task_serial | USB CDC read, GridConnect parsing |
+| 1 | task_servicemode | Programming-track CV read/write (Service Mode) |
 
 ### Data Flow
 
 ```
 USB CDC → task_serial → GridConnect parser → CAN RX → src/lcc/
 src/lcc/ traction callbacks → DCC engine → priority queue → wavegen → PIO
+src/lcc/ memconfig 0xF8 on CS node → task_servicemode → PIO2 (prog track) → ACK via ADC
 ```
 
 ## Conventions

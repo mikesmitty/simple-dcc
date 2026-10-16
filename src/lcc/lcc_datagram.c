@@ -12,10 +12,18 @@
 
 void lcc_datagram_send_ok(const lcc_node_t *node, uint16_t dst_alias)
 {
+    lcc_datagram_send_ok_flags(node, dst_alias, 0);
+}
+
+void lcc_datagram_send_ok_flags(const lcc_node_t *node, uint16_t dst_alias,
+                                uint8_t flags)
+{
     lcc_frame_t f;
     f.id  = lcc_can_id(LCC_MTI_DATAGRAM_OK, node->alias);
     f.dlc = 2;
     lcc_frame_build_addressed_hdr(f.data, dst_alias, 0);
+    if (flags != 0)
+        f.data[f.dlc++] = flags;
     (void)lcc_if_tx(&f);
 }
 
@@ -82,7 +90,8 @@ bool lcc_datagram_dispatch(lcc_node_t *node, uint16_t src_alias,
 
     switch (payload[0]) {
     case LCC_MEMCONFIG_CMD:
-        lcc_datagram_send_ok(node, src_alias);
+        lcc_datagram_send_ok_flags(node, src_alias,
+                                   lcc_memconfig_ack_flags(node, payload, len));
         lcc_memconfig_handle(node, src_alias, payload, len);
         return true;
     default:

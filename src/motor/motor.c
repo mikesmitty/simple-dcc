@@ -71,9 +71,16 @@ void motor_set_current_limit_ma(motor_t *m, uint16_t ma) {
     m->current_limit = ma_to_adc_units(ma);
 }
 
-static uint16_t motor_read_adc(motor_t *m) {
+uint16_t motor_read_current_raw(motor_t *m) {
+    // The ADC mux is shared by the track monitor and the Service Mode ACK
+    // detector, which can run on different cores. Select + convert must be
+    // one step or a reader gets the other track's channel. A conversion is
+    // ~2 us, so the critical section is short.
+    taskENTER_CRITICAL();
     adc_select_input(m->adc_channel);
-    return adc_read();
+    uint16_t v = adc_read();
+    taskEXIT_CRITICAL();
+    return v;
 }
 
 static bool motor_check_fault(motor_t *m) {
@@ -81,7 +88,7 @@ static bool motor_check_fault(motor_t *m) {
 }
 
 static bool motor_check_overcurrent(motor_t *m) {
-    m->last_reading = motor_read_adc(m);
+    m->last_reading = motor_read_current_raw(m);
     return m->last_reading > m->current_limit;
 }
 

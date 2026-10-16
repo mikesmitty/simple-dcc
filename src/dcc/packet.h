@@ -59,4 +59,23 @@ void           packet_build_pom_write_byte(dcc_packet_t *pkt,
                                            uint16_t cv, uint8_t value,
                                            int8_t repeats);
 
+// Build an NMRA S-9.2.3 Direct Byte Service Mode packet. Service Mode
+// packets have no address byte — they are broadcast on the isolated
+// programming track. Wire layout:
+//     0111_CC_VV  CCCCCCCC  DDDDDDDD
+// where CC = 11 (write) or 01 (verify), VV:CCCCCCCC is the 10-bit wire
+// encoding of (cv - 1), and DDDDDDDD is the value byte. `cv` is 1-based
+// (1..1024). Priority/repeats are irrelevant: callers feed these directly
+// to the dedicated service-mode PIO, not the shared priority queue.
+void           packet_build_svc_write_byte(dcc_packet_t *pkt,
+                                           uint16_t cv, uint8_t value);
+void           packet_build_svc_verify_byte(dcc_packet_t *pkt,
+                                            uint16_t cv, uint8_t value);
+
+// Direct Bit Verify (S-9.2.3 bit manipulation, K = 0):
+//     0111_10_VV  CCCCCCCC  1110_DBBB
+// The decoder ACKs iff bit BBB (0..7) of the CV equals D (`value`).
+void           packet_build_svc_verify_bit(dcc_packet_t *pkt, uint16_t cv,
+                                           uint8_t bit, bool value);
+
 #endif // PACKET_H

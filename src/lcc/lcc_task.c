@@ -4,6 +4,7 @@
 #include "lcc/lcc_node.h"
 #include "lcc/lcc_alias.h"
 #include "lcc/lcc_events.h"
+#include "lcc/lcc_memconfig.h"
 #include "lcc/lcc_train_search.h"
 #include "serial/serial.h"
 
@@ -11,6 +12,9 @@
 #include "task.h"
 
 #define TICK_PERIOD_MS  100
+/* RX wait cap while a deferred memconfig reply is outstanding, so a
+ * finished programming-track op isn't held for a whole tick. */
+#define DEFERRED_POLL_MS  5
 
 void lcc_task_init(void)
 {
@@ -57,9 +61,15 @@ void lcc_task_run(void)
         TickType_t wait_ms = 0;
         if ((int32_t)(next_tick - now) > 0)
             wait_ms = (TickType_t)((next_tick - now) * portTICK_PERIOD_MS);
+        if (wait_ms > DEFERRED_POLL_MS && lcc_memconfig_deferred_pending())
+            wait_ms = DEFERRED_POLL_MS;
 
         if (lcc_if_rx(&frame, wait_ms))
             lcc_if_dispatch(&frame);
+
+        /* Deferred memconfig replies (programming track) finish on another
+         * task; send them from here so all datagram TX stays on this one. */
+        lcc_memconfig_flush_deferred();
 
         now = xTaskGetTickCount();
         if ((int32_t)(now - next_tick) >= 0) {

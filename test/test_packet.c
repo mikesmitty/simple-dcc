@@ -196,6 +196,92 @@ static void test_pom_write_short_forced_long(void) {
     printf("  PASS: POM write, short-in-long-form honored\n");
 }
 
+static void test_svc_write_byte_layout(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // Service Mode Direct Byte Write, CV 3 = 0x42. No address byte.
+    //   0x7C = 0111_1100 (write-byte opcode, cv high bits = 00)
+    //   0x02 = cv - 1 low byte
+    //   0x42 = value
+    packet_build_svc_write_byte(pkt, 3, 0x42);
+    assert(pkt->len == 3);
+    assert(pkt->data[0] == 0x7C);
+    assert(pkt->data[1] == 0x02);
+    assert(pkt->data[2] == 0x42);
+    assert(pkt->address == BROADCAST_ADDRESS);
+
+    // XOR checksum emerges after encode: 0x7C ^ 0x02 ^ 0x42 = 0x3C
+    encoded_packet_t enc = packet_encode(pkt);
+    assert(enc.count == 2);
+    // Word 0: [len=4][0x7C][0x02][0x42]
+    assert(enc.words[0] == 0x047C0242u);
+    // Word 1: [0x3C][...]
+    assert((enc.words[1] >> 24) == 0x3C);
+
+    packet_free(pkt);
+    printf("  PASS: SVC write, byte layout\n");
+}
+
+static void test_svc_verify_byte_layout(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // Service Mode Direct Byte Verify, CV 1 = 3 (factory-default address check).
+    //   0x74 = 0111_0100 (verify-byte opcode, cv high bits = 00)
+    //   0x00 = cv - 1 low byte
+    //   0x03 = expected value
+    packet_build_svc_verify_byte(pkt, 1, 3);
+    assert(pkt->len == 3);
+    assert(pkt->data[0] == 0x74);
+    assert(pkt->data[1] == 0x00);
+    assert(pkt->data[2] == 0x03);
+
+    packet_free(pkt);
+    printf("  PASS: SVC verify, byte layout\n");
+}
+
+static void test_svc_high_cv(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // CV 1024 → wire_cv = 1023 = 0x3FF.
+    //   opcode byte = 0x7C | 0x03 = 0x7F
+    //   low byte    = 0xFF
+    packet_build_svc_write_byte(pkt, 1024, 0x55);
+    assert(pkt->data[0] == 0x7F);
+    assert(pkt->data[1] == 0xFF);
+    assert(pkt->data[2] == 0x55);
+
+    packet_free(pkt);
+    printf("  PASS: SVC write, CV 1024\n");
+}
+
+static void test_svc_verify_bit_layout(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // Direct Bit Verify, CV 29 bit 5 == 1.
+    //   0x78 = 0111_1000 (bit-manipulation opcode, cv high bits = 00)
+    //   0x1C = cv - 1 low byte
+    //   0xED = 1110_1101 (K=0 verify, D=1, BBB=101)
+    packet_build_svc_verify_bit(pkt, 29, 5, true);
+    assert(pkt->len == 3);
+    assert(pkt->data[0] == 0x78);
+    assert(pkt->data[1] == 0x1C);
+    assert(pkt->data[2] == 0xED);
+    assert(pkt->address == BROADCAST_ADDRESS);
+
+    // D=0, bit 0, CV 1024 (cv high bits = 11).
+    packet_build_svc_verify_bit(pkt, 1024, 0, false);
+    assert(pkt->data[0] == 0x7B);
+    assert(pkt->data[1] == 0xFF);
+    assert(pkt->data[2] == 0xE0);
+
+    packet_free(pkt);
+    printf("  PASS: SVC verify, bit layout\n");
+}
+
 int main(void) {
     printf("test_packet:\n");
     test_idle_packet_encode();
@@ -208,6 +294,10 @@ int main(void) {
     test_pom_write_high_cv_address();
     test_pom_write_auto_long_address();
     test_pom_write_short_forced_long();
+    test_svc_write_byte_layout();
+    test_svc_verify_byte_layout();
+    test_svc_high_cv();
+    test_svc_verify_bit_layout();
     printf("All packet tests passed.\n");
     return 0;
 }

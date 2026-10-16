@@ -44,6 +44,12 @@ bool lcc_events_register(lcc_node_t *node,
  * already verified the addressed destination. */
 void lcc_events_handle_frame(lcc_node_t *node, const lcc_frame_t *frame);
 
+/* Emit Producer/Consumer Identified for every event registered to `node`.
+ * Sent after Initialization Complete so listeners that asked before the
+ * node came online still find it — JMRI looks for the programming-track
+ * producer only once, when its connection starts. */
+void lcc_events_announce(const lcc_node_t *node);
+
 /* Produce an EVENT_REPORT (MTI 0x05B4) with the given event ID sourced
  * from `node->alias`. Used by the emergency-event sender in M4 and the
  * traction layer in M5+. */

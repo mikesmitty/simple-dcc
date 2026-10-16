@@ -165,6 +165,7 @@
 #define LCC_MEMCFG_READ             0x40  /* Read, space in low 2 bits */
 #define LCC_MEMCFG_READ_REPLY       0x50  /* Read reply, space in low 2 bits */
 #define LCC_MEMCFG_WRITE_REPLY      0x10  /* Write reply */
+#define LCC_MEMCFG_REPLY_FAILED     0x08  /* OR'd into READ/WRITE_REPLY: error code follows */
 #define LCC_MEMCFG_GET_SPACE_INFO   0x84  /* Get Address Space Info */
 #define LCC_MEMCFG_SPACE_INFO_REPLY 0x87  /* Address Space Info reply (present) */
 #define LCC_MEMCFG_SPACE_NOT_KNOWN  0x86  /* Address Space Info reply (not present) */
@@ -182,6 +183,23 @@
 #define LCC_SPACE_CONFIG     0xFD
 #define LCC_SPACE_ACDI_MFG   0xFC
 #define LCC_SPACE_ACDI_USER  0xFB
+#define LCC_SPACE_DCC_CV     0xF8  /* address = CV - 1 */
+
+/* Datagram Received OK flags byte. Reply Pending tells the sender a reply
+ * datagram follows; the low nibble N extends its wait to 2^N seconds. */
+#define LCC_DATAGRAM_OK_REPLY_PENDING  0x80
+
+/* OpenLCB error codes carried in Datagram Rejected and memconfig failure
+ * replies. The DCC programming codes are the ones JMRI's OlcbProgrammer
+ * maps to ProgListener statuses. */
+#define LCC_ERR_PERMANENT          0x1000
+#define LCC_ERR_TEMPORARY          0x2000
+#define LCC_ERR_INVALID_ARGUMENTS  0x1080
+#define LCC_ERR_OUT_OF_BOUNDS      0x1082
+#define LCC_ERR_DCC_PGM_DISABLED   0x1021  /* no programming track available */
+#define LCC_ERR_DCC_NO_LOCO        0x2031  /* no decoder answered */
+#define LCC_ERR_DCC_FAILED_VERIFY  0x2032  /* decoder never ACKed the value */
+#define LCC_ERR_DCC_PGM_SHORT      0x2035  /* programming track overload */
 
 /* Train Search Protocol event prefix (OpenLCB S-9.7.0.2). Upper 32 bits are
  * fixed; lower 32 bits pack 6 decimal-digit nibbles (bits 31..8) followed by
@@ -204,6 +222,11 @@
 #define LCC_EVENT_CLEAR_EMERG_OFF 0x010000000000FFFEULL
 #define LCC_EVENT_EMERGENCY_STOP  0x010000000000FFFDULL
 #define LCC_EVENT_CLEAR_EMERG_STOP 0x010000000000FFFCULL
+
+/* Produced by the node that owns a DCC programming track. JMRI's global
+ * (Service Mode) programmer sends Identify Producers for this event and
+ * sends its 0xF8 CV reads/writes to whichever node answers. */
+#define LCC_EVENT_IS_PROGRAMMING_TRACK 0x090099FEFFFF0002ULL
 
 /* DCC-proxy train node ID base (06.01.00.00.XX.XX with XX.XX = DCC address). */
 #define LCC_TRAIN_NODE_ID_BASE  0x060100000000ULL

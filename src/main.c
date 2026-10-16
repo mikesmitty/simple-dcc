@@ -13,6 +13,7 @@
 #include "protocol/lcc_interface.h"
 #include "motor/motor.h"
 #include "track/track.h"
+#include "servicemode/servicemode.h"
 #include "display/display.h"
 
 #define WAVEGEN_QUEUE_DEPTH  8
@@ -134,6 +135,16 @@ int main(void) {
     dcc_init(&dcc_engine, pqueue_input_queue);
     printf("[INIT] DCC engine ready\n");
 
+    // Service Mode (programming track) — brings up PIO2 on the prog
+    // signal pin so JMRI's Service Mode programmer can read/write CVs
+    // on whatever decoder is on the prog track.
+    bool servicemode_ok = servicemode_init(&motor_b);
+    if (!servicemode_ok) {
+        printf("[INIT] WARN: servicemode init failed (Service Mode disabled)\n");
+    } else {
+        printf("[INIT] Service Mode ready (PIO2 on sig_b)\n");
+    }
+
     lcc_interface_init(&dcc_engine, &track_main, pqueue_input_queue);
     printf("[INIT] LCC interface ready\n");
 
@@ -154,6 +165,9 @@ int main(void) {
     xTaskCreate(task_dcc_reminder,   "reminder",  512,  &dcc_engine,      3, NULL);
     xTaskCreate(task_protocol,       "protocol",  1024, NULL,             2, NULL);
     xTaskCreate(task_serial,         "serial",    1024, NULL,             1, NULL);
+    if (servicemode_ok) {
+        xTaskCreate(task_servicemode, "svcmode",  512,  NULL,             1, NULL);
+    }
     if (display_ok) {
         xTaskCreate(task_display,    "display",   1024, NULL,             1, NULL);
     }

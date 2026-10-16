@@ -71,6 +71,11 @@ static void emit_identities_for_node(const lcc_node_t *node)
     }
 }
 
+void lcc_events_announce(const lcc_node_t *node)
+{
+    emit_identities_for_node(node);
+}
+
 static void handle_single_identify(const lcc_node_t *node,
                                    uint64_t event_id,
                                    uint8_t required_flag,

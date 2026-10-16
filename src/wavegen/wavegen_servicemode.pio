@@ -8,7 +8,7 @@
 
 .wrap_target
 
-set y, 15                  ; Set the preamble length to 16 (n-1)
+set y, 21                  ; 22-bit preamble (n-1): S-9.2.3 service mode needs >= 20
 preamble:
     set pins, 0b1     [28] ; Set pin high for the preamble
     set pins, 0b0     [27] ; Set pin low for the preamble

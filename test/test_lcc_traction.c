@@ -670,6 +670,102 @@ static void test_cv_space_per_node_isolation(void) {
     printf("  PASS: CV space is per-node isolated\n");
 }
 
+/* Memory-config read datagram with explicit-space form:
+ *   [0x20][0x40][addr:4 be][space:1][count:1] */
+static uint8_t mc_read(uint8_t *buf, uint32_t addr, uint8_t count) {
+    buf[0] = 0x20;
+    buf[1] = 0x40;
+    buf[2] = (uint8_t)(addr >> 24);
+    buf[3] = (uint8_t)(addr >> 16);
+    buf[4] = (uint8_t)(addr >>  8);
+    buf[5] = (uint8_t)(addr      );
+    buf[6] = 0xF8;
+    buf[7] = count;
+    return 8;
+}
+
+static void test_cv_space_direct_write_poms(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 42, false, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    /* JMRI ops-mode programmer: write CV 29 at address 28, no index latch. */
+    uint8_t pkt[16];
+    uint8_t val = 0x06;
+    uint8_t len = mc_write(pkt, 28, &val, 1);
+    lcc_memconfig_handle(&n, 0x123, pkt, len);
+
+    assert(last_pom.calls == 1);
+    assert(last_pom.addr == 42);
+    assert(last_pom.is_long == false);
+    assert(last_pom.cv == 29);
+    assert(last_pom.value == 0x06);
+    assert(t.pom_cv_index == 0);         /* direct path leaves the latch alone */
+
+    printf("  PASS: CV space direct-address write triggers POM\n");
+}
+
+static void test_cv_space_direct_write_long_address(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 3000, true, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    uint8_t pkt[16];
+    uint8_t val = 0x99;
+    uint8_t len = mc_write(pkt, 0, &val, 1);    /* CV 1 */
+    lcc_memconfig_handle(&n, 0x123, pkt, len);
+
+    assert(last_pom.calls == 1);
+    assert(last_pom.addr == 3000);
+    assert(last_pom.is_long == true);
+    assert(last_pom.cv == 1);
+
+    len = mc_write(pkt, 1023, &val, 1);         /* CV 1024, last direct CV */
+    lcc_memconfig_handle(&n, 0x123, pkt, len);
+    assert(last_pom.calls == 2);
+    assert(last_pom.cv == 1024);
+
+    printf("  PASS: CV space direct-address write honors long address\n");
+}
+
+static void test_cv_space_direct_write_past_cv_range_ignored(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 42, false, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    uint8_t pkt[16];
+    uint8_t val = 0x55;
+    uint8_t len = mc_write(pkt, 1024, &val, 1); /* would be CV 1025 */
+    lcc_memconfig_handle(&n, 0x123, pkt, len);
+
+    assert(last_pom.calls == 0);
+    printf("  PASS: CV space ignores direct writes past CV 1024\n");
+}
+
+static void test_cv_space_direct_read_returns_no_data(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 42, false, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    /* POM reads need RailCom; until then the reply carries no data,
+     * which JMRI reports as a failed read. */
+    uint8_t pkt[16];
+    uint8_t len = mc_read(pkt, 28, 1);
+    lcc_memconfig_handle(&n, 0x123, pkt, len);
+
+    assert(last_datagram.calls == 1);
+    assert(last_datagram.data[1] == 0x50);      /* READ_REPLY, explicit space */
+    assert(last_datagram.data[6] == 0xF8);
+    assert(last_datagram.len == 7);             /* header only */
+    assert(last_pom.calls == 0);
+
+    printf("  PASS: CV space direct-address read returns no data\n");
+}
+
 static void test_cv_space_get_space_info(void) {
     reset_all();
     lcc_node_t n; lcc_train_state_t t;
@@ -716,6 +812,10 @@ int main(void) {
     test_cv_space_value_before_index_is_noop();
     test_cv_space_per_node_isolation();
     test_cv_space_get_space_info();
+    test_cv_space_direct_write_poms();
+    test_cv_space_direct_write_long_address();
+    test_cv_space_direct_write_past_cv_range_ignored();
+    test_cv_space_direct_read_returns_no_data();
     printf("All LCC traction tests passed.\n");
     return 0;
 }

@@ -1,5 +1,6 @@
 #include "lcc/lcc_alias.h"
 #include "lcc/lcc_defs.h"
+#include "lcc/lcc_events.h"
 #include "lcc/lcc_if.h"
 
 #include <string.h>
@@ -53,6 +54,10 @@ static void emit_claim_and_init(const lcc_node_t *node)
 
     /* INITIALIZATION_COMPLETE: node-id payload */
     lcc_node_send_global(node, LCC_MTI_INITIALIZATION_COMPLETE, nid, 6);
+
+    /* Then the node's produced/consumed events, so listeners that
+     * queried before it came online still see them. */
+    lcc_events_announce(node);
 }
 
 void lcc_alias_reannounce(const lcc_node_t *node)

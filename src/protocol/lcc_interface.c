@@ -13,6 +13,7 @@
 #include "lcc/lcc_traction.h"
 #include "lcc/lcc_train_search.h"
 #include "mcp2515/mcp2515_lcc.h"
+#include "servicemode/servicemode.h"
 #include "hardware/spi.h"
 #include "cdi_data.h"
 
@@ -313,10 +314,10 @@ static uint16_t acdi_mfg_read(lcc_node_t *node, uint32_t addr, uint16_t count,
 
 /* Space registration table — fed to lcc_memconfig_register_spaces() once. */
 static const lcc_memspace_handler_t g_spaces[] = {
-    { LCC_SPACE_CDI,       0,                 true,  cdi_read,       NULL,             NULL                    },
-    { LCC_SPACE_CONFIG,    CONFIG_MEM_SIZE,   false, config_read,    config_write,     config_update_complete  },
-    { LCC_SPACE_ACDI_MFG,  ACDI_MFG_SIZE,     true,  acdi_mfg_read,  NULL,             NULL                    },
-    { LCC_SPACE_ACDI_USER, ACDI_USER_SIZE,    false, acdi_user_read, acdi_user_write,  config_update_complete  },
+    { LCC_SPACE_CDI,       0,                 true,  cdi_read,       NULL,             NULL,                   NULL },
+    { LCC_SPACE_CONFIG,    CONFIG_MEM_SIZE,   false, config_read,    config_write,     config_update_complete, NULL },
+    { LCC_SPACE_ACDI_MFG,  ACDI_MFG_SIZE,     true,  acdi_mfg_read,  NULL,             NULL,                   NULL },
+    { LCC_SPACE_ACDI_USER, ACDI_USER_SIZE,    false, acdi_user_read, acdi_user_write,  config_update_complete, NULL },
 };
 
 /* CDI size is only known at runtime — patch it in after the table is
@@ -489,6 +490,67 @@ static const lcc_traction_hooks_t g_traction_hooks = {
     .pom_write_byte = traction_pom_write_byte,
 };
 
+// --- Programming track (Service Mode) ---------------------------------
+// JMRI's global programmer finds the programming track by asking who
+// produces IS_PROGRAMMING_TRACK, then reads/writes space 0xF8 at address
+// CV - 1 on that node. The CS node answers. Each op runs on
+// task_servicemode; memconfig ACKs with Reply Pending and sends the reply
+// once progtrack_done reports back.
+
+#define PROGTRACK_CV_COUNT  1024
+
+static uint16_t svc_result_to_error(svc_result_t res) {
+    switch (res) {
+    case SVC_OK:          return 0;
+    case SVC_NO_ACK:      return LCC_ERR_DCC_FAILED_VERIFY;
+    case SVC_NO_LOCO:     return LCC_ERR_DCC_NO_LOCO;
+    case SVC_SHORT:       return LCC_ERR_DCC_PGM_SHORT;
+    case SVC_BUSY:        return LCC_ERR_TEMPORARY;
+    case SVC_UNAVAILABLE: return LCC_ERR_DCC_PGM_DISABLED;
+    }
+    return LCC_ERR_PERMANENT;
+}
+
+/* Completion callbacks — run on task_servicemode. */
+static void progtrack_read_done(svc_result_t res, uint8_t value, void *ctx) {
+    (void)ctx;
+    if (res == SVC_OK)
+        lcc_memconfig_complete(0, &value, 1);
+    else
+        lcc_memconfig_complete(svc_result_to_error(res), NULL, 0);
+}
+static void progtrack_write_done(svc_result_t res, uint8_t value, void *ctx) {
+    (void)value; (void)ctx;
+    lcc_memconfig_complete(svc_result_to_error(res), NULL, 0);
+}
+
+static uint16_t progtrack_defer(lcc_node_t *node,
+                                const lcc_memconfig_deferred_t *req) {
+    (void)node;
+    /* One CV per request: JMRI reads/writes a single byte. A multi-byte
+     * read gets a short (1-byte) reply; multi-byte writes are refused
+     * rather than half-applied. */
+    if (req->is_write && req->count != 1)
+        return LCC_ERR_INVALID_ARGUMENTS;
+
+    uint16_t cv = (uint16_t)(req->addr + 1);
+    svc_result_t res = req->is_write
+        ? servicemode_submit(SVC_OP_WRITE, cv, req->data[0],
+                             progtrack_write_done, NULL)
+        : servicemode_submit(SVC_OP_READ, cv, 0,
+                             progtrack_read_done, NULL);
+    return svc_result_to_error(res);
+}
+
+static const lcc_memspace_handler_t g_cs_node_spaces[] = {
+    {
+        .space     = LCC_SPACE_DCC_CV,
+        .size      = PROGTRACK_CV_COUNT,
+        .read_only = false,
+        .defer     = progtrack_defer,
+    },
+};
+
 // --- Train pool allocator (M7) -----------------------------------------
 // Called by the Train Search dispatcher when a throttle's ALLOCATE query
 // fails to match any registered train. Pick the first free pool slot,
@@ -657,6 +719,13 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
     lcc_traction_set_hooks(&g_traction_hooks);
     memset(g_train_used, 0, sizeof(g_train_used));
     lcc_train_search_set_allocator(train_allocator);
+
+    /* Programming track: the CS node owns it, publishing 0xF8 for
+     * Service Mode CV access and producing the event JMRI looks for. */
+    lcc_memconfig_register_node_spaces(&g_cs_node, g_cs_node_spaces,
+        (uint8_t)(sizeof(g_cs_node_spaces) / sizeof(g_cs_node_spaces[0])));
+    lcc_events_register(&g_cs_node, LCC_EVENT_IS_PROGRAMMING_TRACK,
+                        LCC_EVENT_PRODUCER, NULL);
 
     /* Memory-config spaces — CDI size is computed from the generated
      * _cdi_data's NUL terminator (strlen gives XML byte count). */

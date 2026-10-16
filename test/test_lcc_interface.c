@@ -162,9 +162,45 @@ void lcc_memconfig_set_hooks(lcc_memconfig_reboot_fn reboot,
     captured_factory_reset_hook = factory_reset;
 }
 
+static const lcc_node_t             *captured_node_spaces_node;
+static const lcc_memspace_handler_t *captured_node_spaces;
+static uint8_t                       captured_node_space_count;
+void lcc_memconfig_register_node_spaces(lcc_node_t *node,
+                                        const lcc_memspace_handler_t *spaces,
+                                        uint8_t count) {
+    captured_node_spaces_node = node;
+    captured_node_spaces = spaces;
+    captured_node_space_count = count;
+}
+
+static int      complete_calls;
+static uint16_t complete_error;
+static uint8_t  complete_data[4];
+static uint8_t  complete_len;
+void lcc_memconfig_complete(uint16_t error, const uint8_t *data, uint8_t len) {
+    complete_calls++;
+    complete_error = error;
+    complete_len = len;
+    if (data && len) memcpy(complete_data, data, len);
+}
+
+typedef struct {
+    const lcc_node_t *node;
+    uint64_t          event_id;
+    uint8_t           flags;
+} event_reg_t;
+static event_reg_t captured_events[16];
+static int         captured_event_count;
+
 bool lcc_events_register(lcc_node_t *node, uint64_t event_id, uint8_t flags,
                          lcc_event_on_report_fn on_report) {
-    (void)node; (void)event_id; (void)flags; (void)on_report;
+    (void)on_report;
+    if (captured_event_count < 16) {
+        captured_events[captured_event_count].node = node;
+        captured_events[captured_event_count].event_id = event_id;
+        captured_events[captured_event_count].flags = flags;
+        captured_event_count++;
+    }
     return true;
 }
 
@@ -182,6 +218,31 @@ bool mcp2515_lcc_start(const mcp2515_config_t *cfg) { (void)cfg; return true; }
  * g_cdi_size == strlen(_cdi_data); any non-empty NUL-terminated buffer
  * stands in. */
 const uint8_t _cdi_data[] = "<cdi></cdi>";
+
+/* ---- servicemode stub ------------------------------------------------- */
+
+/* The real driver is PIO + ADC. Capture submissions so the tests can
+ * check the 0xF8 → CV mapping and drive the completion callback. */
+#include "servicemode/servicemode.h"
+
+static int                 svc_submit_calls;
+static svc_op_t            svc_last_op;
+static uint16_t            svc_last_cv;
+static uint8_t             svc_last_value;
+static servicemode_done_fn svc_last_done;
+static void               *svc_last_ctx;
+static svc_result_t        svc_submit_result;
+
+svc_result_t servicemode_submit(svc_op_t op, uint16_t cv, uint8_t value,
+                                servicemode_done_fn done, void *ctx) {
+    svc_submit_calls++;
+    svc_last_op = op;
+    svc_last_cv = cv;
+    svc_last_value = value;
+    svc_last_done = done;
+    svc_last_ctx = ctx;
+    return svc_submit_result;
+}
 
 /* ---- lcc_interface.c under test ---------------------------------------- */
 
@@ -206,6 +267,17 @@ static void reset_all(void) {
     captured_space_count = 0;
     captured_reboot_hook = NULL;
     captured_factory_reset_hook = NULL;
+    captured_node_spaces_node = NULL;
+    captured_node_spaces = NULL;
+    captured_node_space_count = 0;
+    captured_event_count = 0;
+    complete_calls = 0;
+    complete_error = 0;
+    complete_len = 0;
+    memset(complete_data, 0, sizeof(complete_data));
+    svc_submit_calls = 0;
+    svc_last_done = NULL;
+    svc_submit_result = SVC_OK;
 
     nv_initialized = false;
     memset(nv_data, 0, sizeof(nv_data));
@@ -430,6 +502,79 @@ static void test_emergency_events(void) {
     printf("  PASS: emergency event handler\n");
 }
 
+/* Programming track: the CS node publishes 0xF8 with a deferred handler
+ * and produces IS_PROGRAMMING_TRACK; the handler maps address → CV,
+ * submits to the Service Mode driver, and turns results into JMRI's
+ * OlcbProgrammer error codes. */
+static void test_programming_track(void) {
+    reset_all();
+    lcc_interface_load_config();
+    lcc_interface_init(&mock_dcc_engine, &mock_track_main, NULL);
+
+    assert(captured_node_spaces_node == &g_cs_node);
+    assert(captured_node_space_count == 1);
+    const lcc_memspace_handler_t *h = &captured_node_spaces[0];
+    assert(h->space == LCC_SPACE_DCC_CV);
+    assert(h->size == 1024);
+    assert(h->defer != NULL);
+
+    bool produced = false;
+    for (int i = 0; i < captured_event_count; i++) {
+        if (captured_events[i].node == &g_cs_node &&
+            captured_events[i].event_id == LCC_EVENT_IS_PROGRAMMING_TRACK &&
+            (captured_events[i].flags & LCC_EVENT_PRODUCER))
+            produced = true;
+    }
+    assert(produced);
+
+    /* Read CV 29 (address 28). */
+    lcc_memconfig_deferred_t rd = { .is_write = false, .space = 0xF8,
+                                    .addr = 28, .count = 1, .data = NULL };
+    assert(h->defer(&g_cs_node, &rd) == 0);
+    assert(svc_submit_calls == 1);
+    assert(svc_last_op == SVC_OP_READ);
+    assert(svc_last_cv == 29);
+    svc_last_done(SVC_OK, 0x06, svc_last_ctx);
+    assert(complete_calls == 1);
+    assert(complete_error == 0);
+    assert(complete_len == 1 && complete_data[0] == 0x06);
+
+    svc_last_done(SVC_NO_LOCO, 0, svc_last_ctx);
+    assert(complete_error == LCC_ERR_DCC_NO_LOCO);
+    assert(complete_len == 0);
+
+    /* Write CV 1 = 3. */
+    uint8_t three = 3;
+    lcc_memconfig_deferred_t wr = { .is_write = true, .space = 0xF8,
+                                    .addr = 0, .count = 1, .data = &three };
+    assert(h->defer(&g_cs_node, &wr) == 0);
+    assert(svc_last_op == SVC_OP_WRITE);
+    assert(svc_last_cv == 1);
+    assert(svc_last_value == 3);
+    svc_last_done(SVC_OK, 3, svc_last_ctx);
+    assert(complete_error == 0 && complete_len == 0);
+    svc_last_done(SVC_NO_ACK, 3, svc_last_ctx);
+    assert(complete_error == LCC_ERR_DCC_FAILED_VERIFY);
+    svc_last_done(SVC_SHORT, 3, svc_last_ctx);
+    assert(complete_error == LCC_ERR_DCC_PGM_SHORT);
+
+    /* Multi-byte writes are refused, not half-applied. */
+    uint8_t two[2] = { 1, 2 };
+    lcc_memconfig_deferred_t wr2 = { .is_write = true, .space = 0xF8,
+                                     .addr = 0, .count = 2, .data = two };
+    int before = svc_submit_calls;
+    assert(h->defer(&g_cs_node, &wr2) == LCC_ERR_INVALID_ARGUMENTS);
+    assert(svc_submit_calls == before);
+
+    /* Driver refusals come straight back as error codes. */
+    svc_submit_result = SVC_BUSY;
+    assert(h->defer(&g_cs_node, &rd) == LCC_ERR_TEMPORARY);
+    svc_submit_result = SVC_UNAVAILABLE;
+    assert(h->defer(&g_cs_node, &rd) == LCC_ERR_DCC_PGM_DISABLED);
+
+    printf("  PASS: programming track wiring\n");
+}
+
 int main(void) {
     printf("test_lcc_interface:\n");
     test_node_id_generation();
@@ -437,6 +582,7 @@ int main(void) {
     test_dynamic_updates();
     test_allocator_and_events();
     test_emergency_events();
+    test_programming_track();
     printf("All LCC interface tests passed.\n");
     return 0;
 }

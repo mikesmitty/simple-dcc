@@ -33,6 +33,11 @@ void lcc_datagram_handle_frame(lcc_node_t *node, const lcc_frame_t *frame);
  * payload — so this is a single CAN frame. */
 void lcc_datagram_send_ok(const lcc_node_t *node, uint16_t dst_alias);
 
+/* Datagram OK with a flags byte (LCC_DATAGRAM_OK_REPLY_PENDING | timeout
+ * exponent). flags == 0 sends the same 2-byte frame as send_ok. */
+void lcc_datagram_send_ok_flags(const lcc_node_t *node, uint16_t dst_alias,
+                                uint8_t flags);
+
 /* Send Datagram Rejected (MTI 0x0A48) with a 16-bit error code. */
 void lcc_datagram_send_rejected(const lcc_node_t *node, uint16_t dst_alias,
                                 uint16_t error_code);

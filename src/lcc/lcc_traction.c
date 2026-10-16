@@ -28,7 +28,11 @@ void lcc_train_state_init(lcc_train_state_t *state,
 
 /* ---- Traction CV space (0xF8) — OpenMRN TractionCvSpace layout --------
  *
- * Offsets (from TractionCvSpace.hxx):
+ * Direct addressing (what JMRI's ops-mode programmer uses):
+ *   0x00000000..0x000003FF  CV 1..1024 at address CV - 1. A write sends
+ *                           the POM packet; reads need RailCom (Phase 3).
+ *
+ * Indirect offsets (OpenMRN's CDI "CV access" form, TractionCvSpace.hxx):
  *   0x7F000000  4 bytes  CV index, 1-based, big-endian (writable, readable)
  *   0x7F000004  1 byte   CV value (write triggers POM write with latched CV;
  *                                  read triggers RailCom fetch — Phase 3)
@@ -41,6 +45,7 @@ void lcc_train_state_init(lcc_train_state_t *state,
  */
 
 enum {
+    CV_DIRECT_COUNT         = 1024u,       /* CVs 1..1024 */
     CV_OFFSET_INDEX         = 0x7F000000u,
     CV_OFFSET_VALUE         = 0x7F000004u,
     CV_OFFSET_VERIFY_VALUE  = 0x7F000005u,
@@ -80,6 +85,15 @@ static uint16_t cv_space_write(lcc_node_t *node, uint32_t addr,
                                uint16_t count, const uint8_t *in)
 {
     if (!node->train) return 0;
+
+    /* Direct CV address: one-byte POM write to CV addr + 1. */
+    if (addr < CV_DIRECT_COUNT && count >= 1) {
+        if (g_hooks.pom_write_byte)
+            g_hooks.pom_write_byte(node->train->dcc_address,
+                                   node->train->is_long_address,
+                                   (uint16_t)(addr + 1), in[0]);
+        return 1;
+    }
 
     /* CV_INDEX latches the 1-based CV number. OpenMRN accepts 1-4 byte
      * partial writes anywhere within the 4-byte span; match that. */
