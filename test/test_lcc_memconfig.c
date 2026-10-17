@@ -189,8 +189,13 @@ static void test_check_ok_flags(void) {
     assert(check(low_bits, sizeof(low_bits)) == 0
            && g_flags == LCC_DATAGRAM_OK_REPLY_PENDING);
 
-    uint8_t info[3] = { 0x20, 0x84, 0xF8 };      /* not a read/write */
-    assert(check(info, sizeof(info)) == 0 && g_flags == 0);
+    /* Options and space info are answered with a reply datagram too. */
+    uint8_t info[3] = { 0x20, 0x84, 0xF8 };
+    assert(check(info, sizeof(info)) == 0
+           && g_flags == LCC_DATAGRAM_OK_REPLY_PENDING);
+    uint8_t options[2] = { 0x20, 0x80 };
+    assert(check(options, sizeof(options)) == 0
+           && g_flags == LCC_DATAGRAM_OK_REPLY_PENDING);
     uint8_t update[2] = { 0x20, 0xA8 };
     assert(check(update, sizeof(update)) == 0 && g_flags == 0);
 
@@ -230,8 +235,8 @@ static void test_check_rejects_unservable(void) {
     assert(check(short_info, sizeof(short_info)) == LCC_ERR_INVALID_ARGUMENTS);
 
     /* Sub-commands we don't implement, and replies (we're never a client). */
-    uint8_t options[2] = { 0x20, 0x80 };
-    assert(check(options, sizeof(options)) == LCC_ERR_UNIMPLEMENTED_SUBCMD);
+    uint8_t lock[8] = { 0x20, 0x88, 0, 0, 0, 0, 0, 0 };
+    assert(check(lock, sizeof(lock)) == LCC_ERR_UNIMPLEMENTED_SUBCMD);
     uint8_t reply[8] = { 0x20, 0x50, 0, 0, 0, 0, 0xFD, 0 };
     assert(check(reply, sizeof(reply)) == LCC_ERR_UNIMPLEMENTED_SUBCMD);
     uint8_t reserved_read[8] = { 0x20, 0x44, 0, 0, 0, 0, 0xFD, 1 };
@@ -290,6 +295,38 @@ static void test_sync_write(void) {
     assert_bytes(&g_sent[1], want_low, sizeof(want_low));
     assert(g_cfg[5] == 0xB1 && g_cfg[6] == 0xB2);
     printf("  PASS: synchronous write lands and sends Write Reply OK\n");
+}
+
+static void test_get_options(void) {
+    reset_all();
+    uint8_t options[2] = { 0x20, 0x80 };
+
+    /* Fixtures: 0xF8 on the node, 0xFD and a read-only 0xFC globally.
+     * Unaligned reads + writes + 0xFC readable; lengths 1/2/4/arbitrary;
+     * spaces 0xF8..0xFC with 0xFD-0xFF assumed. */
+    lcc_memconfig_handle(&g_node, 0x123, options, sizeof(options));
+    const uint8_t want[] = { 0x20, 0x82, 0x68, 0x00, 0xE2, 0xFC, 0xF8 };
+    assert(g_sent_count == 1);
+    assert_bytes(&g_sent[0], want, sizeof(want));
+
+    /* A writable 0xFB, and no 0xFC. */
+    static const lcc_memspace_handler_t with_fb[] = {
+        { .space = 0xFD, .size = sizeof(g_cfg), .read = cfg_read,
+          .write = cfg_write },
+        { .space = 0xFB, .size = 4, .read = cfg_read, .write = cfg_write },
+    };
+    lcc_memconfig_register_spaces(with_fb, 2);
+    lcc_memconfig_handle(&g_node, 0x123, options, sizeof(options));
+    const uint8_t want_fb[] = { 0x20, 0x82, 0x66, 0x00, 0xE2, 0xFB, 0xF8 };
+    assert_bytes(&g_sent[1], want_fb, sizeof(want_fb));
+
+    /* Only the assumed high spaces. */
+    lcc_memconfig_register_node_spaces(&g_node, NULL, 0);
+    lcc_memconfig_register_spaces(with_fb, 1);
+    lcc_memconfig_handle(&g_node, 0x123, options, sizeof(options));
+    const uint8_t want_high[] = { 0x20, 0x82, 0x60, 0x00, 0xE2, 0xFF, 0xFD };
+    assert_bytes(&g_sent[2], want_high, sizeof(want_high));
+    printf("  PASS: Get Configuration Options reports commands and spaces\n");
 }
 
 static void test_sync_write_failures(void) {
@@ -570,6 +607,7 @@ int main(void) {
     test_check_rejects_unservable();
     test_reboot_and_factory_reset();
     test_sync_write();
+    test_get_options();
     test_sync_write_failures();
     test_sync_write_offers_the_rest();
     test_deferred_read_success();

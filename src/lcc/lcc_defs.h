@@ -167,6 +167,8 @@
 #define LCC_MEMCFG_READ_REPLY       0x50  /* Read reply, space in low 2 bits */
 #define LCC_MEMCFG_WRITE_REPLY      0x10  /* Write reply */
 #define LCC_MEMCFG_REPLY_FAILED     0x08  /* OR'd into READ/WRITE_REPLY: error code follows */
+#define LCC_MEMCFG_GET_OPTIONS      0x80  /* Get Configuration Options */
+#define LCC_MEMCFG_OPTIONS_REPLY    0x82  /* Configuration Options reply */
 #define LCC_MEMCFG_GET_SPACE_INFO   0x84  /* Get Address Space Info */
 #define LCC_MEMCFG_SPACE_INFO_REPLY 0x87  /* Address Space Info reply (present) */
 #define LCC_MEMCFG_SPACE_NOT_KNOWN  0x86  /* Address Space Info reply (not present) */
@@ -176,6 +178,16 @@
 
 /* Read/Write sub-command: space encoding in low 2 bits */
 #define LCC_MEMCFG_SPACE_SPECIAL    0x03  /* space in low 2 bits means 0xFF */
+
+/* Configuration Options reply: available-commands bits (bytes 2-3) and
+ * write lengths (byte 4; the reserved 0x80/0x40/0x20/0x02 are sent as one,
+ * covering 1, 2, 4 and arbitrary lengths). */
+#define LCC_MEMCFG_AVAIL_UNALIGNED_READ   0x4000
+#define LCC_MEMCFG_AVAIL_UNALIGNED_WRITE  0x2000
+#define LCC_MEMCFG_AVAIL_READ_FC          0x0800
+#define LCC_MEMCFG_AVAIL_READ_FB          0x0400
+#define LCC_MEMCFG_AVAIL_WRITE_FB         0x0200
+#define LCC_MEMCFG_WRITE_LENGTHS          0xE2
 /* 0x03 = 0xFF (CDI), 0x02 = 0xFE, 0x01 = 0xFD (config), 0x00 = explicit byte */
 
 /* Well-known address spaces */

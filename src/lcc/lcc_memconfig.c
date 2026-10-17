@@ -303,8 +303,14 @@ uint16_t lcc_memconfig_check(const lcc_node_t *node, const uint8_t *payload,
     }
 
     switch (cmd) {
+    case LCC_MEMCFG_GET_OPTIONS:
+        *ok_flags = LCC_DATAGRAM_OK_REPLY_PENDING;
+        return 0;
     case LCC_MEMCFG_GET_SPACE_INFO:
-        return len < 3 ? LCC_ERR_INVALID_ARGUMENTS : 0;
+        if (len < 3)
+            return LCC_ERR_INVALID_ARGUMENTS;
+        *ok_flags = LCC_DATAGRAM_OK_REPLY_PENDING;
+        return 0;
     case LCC_MEMCFG_UPDATE_COMPLETE:
         return 0;
     case LCC_MEMCFG_REBOOT:
@@ -315,10 +321,59 @@ uint16_t lcc_memconfig_check(const lcc_node_t *node, const uint8_t *payload,
         return factory_reset_confirmed(node, payload, len)
              ? 0 : LCC_ERR_INVALID_ARGUMENTS;
     default:
-        /* Includes replies (we are never a memconfig client), options,
-         * lock, and freeze. */
+        /* Includes replies (we are never a memconfig client), lock, and
+         * freeze. */
         return LCC_ERR_UNIMPLEMENTED_SUBCMD;
     }
+}
+
+/* ---- GET_OPTIONS ------------------------------------------------------ */
+
+static bool space_readable(const lcc_memspace_handler_t *h)
+{
+    return h && (h->read || h->defer);
+}
+
+static void note_space(uint8_t space, uint8_t *lowest, uint8_t *highest)
+{
+    /* 0xFD-0xFF are assumed present; the range covers the rest. */
+    if (space >= 0xFD)
+        return;
+    if (space < *lowest)  *lowest = space;
+    if (space > *highest) *highest = space;
+}
+
+static void handle_get_options(lcc_node_t *node, uint16_t src_alias)
+{
+    uint16_t avail = LCC_MEMCFG_AVAIL_UNALIGNED_READ
+                   | LCC_MEMCFG_AVAIL_UNALIGNED_WRITE;
+    if (space_readable(find_space(node, 0xFC)))
+        avail |= LCC_MEMCFG_AVAIL_READ_FC;
+    const lcc_memspace_handler_t *fb = find_space(node, 0xFB);
+    if (space_readable(fb)) {
+        avail |= LCC_MEMCFG_AVAIL_READ_FB;
+        if (!fb->read_only && (fb->write || fb->defer))
+            avail |= LCC_MEMCFG_AVAIL_WRITE_FB;
+    }
+
+    uint8_t lowest = 0xFF, highest = 0;
+    if (node && node->node_spaces) {
+        for (uint8_t i = 0; i < node->node_space_count; i++)
+            note_space(node->node_spaces[i].space, &lowest, &highest);
+    }
+    for (uint8_t i = 0; i < g_space_count; i++)
+        note_space(g_spaces[i].space, &lowest, &highest);
+    if (highest < lowest) {     /* only the assumed spaces (as OpenMRN) */
+        highest = 0xFF;
+        lowest  = 0xFD;
+    }
+
+    uint8_t reply[7] = {
+        LCC_MEMCONFIG_CMD, LCC_MEMCFG_OPTIONS_REPLY,
+        (uint8_t)(avail >> 8), (uint8_t)avail,
+        LCC_MEMCFG_WRITE_LENGTHS, highest, lowest,
+    };
+    lcc_datagram_send(node, src_alias, reply, sizeof(reply));
 }
 
 /* ---- GET_SPACE_INFO --------------------------------------------------- */
@@ -483,6 +538,10 @@ void lcc_memconfig_handle(lcc_node_t *node, uint16_t src_alias,
 
     uint8_t cmd = payload[1];
 
+    if (cmd == LCC_MEMCFG_GET_OPTIONS) {
+        handle_get_options(node, src_alias);
+        return;
+    }
     if (cmd == LCC_MEMCFG_GET_SPACE_INFO) {
         handle_get_space_info(node, src_alias, payload, len);
         return;
