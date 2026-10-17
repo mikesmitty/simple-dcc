@@ -44,6 +44,7 @@ void motor_init(motor_t *m, char track_id,
     m->fault_pin = fault_pin;
     m->adc_channel = adc_channel;
     m->current_limit = motor_ma_to_raw(current_limit_ma);
+    m->limit_override = 0;
     m->last_reading = 0;
     m->alert_peak = 0;
     m->state = POWER_MODE_OFF;
@@ -76,6 +77,14 @@ void motor_set_current_limit_ma(motor_t *m, uint16_t ma) {
     m->current_limit = motor_ma_to_raw(ma);
 }
 
+void motor_override_limit(motor_t *m, uint16_t raw) {
+    m->limit_override = raw;
+}
+
+static uint16_t trip_limit(const motor_t *m) {
+    return m->limit_override ? m->limit_override : m->current_limit;
+}
+
 uint16_t motor_read_current_raw(motor_t *m) {
     // The ADC mux is shared by the track monitor and the Service Mode ACK
     // detector, which can run on different cores. Select + convert must be
@@ -94,7 +103,7 @@ static bool motor_check_fault(motor_t *m) {
 
 static bool motor_check_overcurrent(motor_t *m) {
     m->last_reading = motor_read_current_raw(m);
-    return m->last_reading > m->current_limit;
+    return m->last_reading > trip_limit(m);
 }
 
 static void motor_set_mode(motor_t *m, power_mode_t mode) {
@@ -150,7 +159,7 @@ static void handle_alert_state(motor_t *m) {
         printf("TRACK %c OVERLOAD after %lums (%umA, peak %umA, limit %umA)\n",
                m->track_id, (unsigned long)elapsed,
                motor_raw_to_ma(m->last_reading), motor_raw_to_ma(m->alert_peak),
-               motor_raw_to_ma(m->current_limit));
+               motor_raw_to_ma(trip_limit(m)));
         motor_set_mode(m, POWER_MODE_OVERLOAD);
         return;
     }

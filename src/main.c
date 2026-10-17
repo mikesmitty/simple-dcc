@@ -138,7 +138,7 @@ int main(void) {
     // Service Mode (programming track) — brings up PIO2 on the prog
     // signal pin so JMRI's Service Mode programmer can read/write CVs
     // on whatever decoder is on the prog track.
-    bool servicemode_ok = servicemode_init(&motor_b);
+    bool servicemode_ok = servicemode_init(&motor_b, &motor_a);
     if (!servicemode_ok) {
         printf("[INIT] WARN: servicemode init failed (Service Mode disabled)\n");
     } else {

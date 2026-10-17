@@ -21,7 +21,9 @@
 #define RECOVERY_MS         50    /* >= 6 resets after each instruction; they
                                    * also serve as the next one's >= 3 leading
                                    * resets */
-#define IDLE_POWER_OFF_MS   1000
+#define WRITE_HOLD_MS       100   /* power kept on after a write so the
+                                   * decoder can finish storing it (DCC-EX) */
+#define IDLE_RECHECK_MS     1000
 
 /* ---- ACK detection ----------------------------------------------------
  * An S-9.2.3 ACK is >= 60 mA above idle for 6 ms +/- 1 ms. The threshold
@@ -44,14 +46,15 @@ typedef struct {
 } svc_request_t;
 
 static motor_t      *g_motor;
+static const motor_t *g_main;
 static PIO           g_pio;
 static uint          g_sm;
 static QueueHandle_t g_queue;
 
-bool servicemode_init(motor_t *prog_motor)
+bool servicemode_init(motor_t *prog_motor, const motor_t *main_motor)
 {
-    if (g_queue)     return true;
-    if (!prog_motor) return false;
+    if (g_queue)                   return true;
+    if (!prog_motor || !main_motor) return false;
 
     if (!pio_can_add_program(pio2, &wavegen_servicemode_program))
         return false;
@@ -61,6 +64,7 @@ bool servicemode_init(motor_t *prog_motor)
         return false;
 
     g_motor = prog_motor;
+    g_main  = main_motor;
     g_pio   = pio2;
     uint offset = pio_add_program(pio2, &wavegen_servicemode_program);
     g_sm    = pio_claim_unused_sm(pio2, true);
@@ -199,40 +203,50 @@ static svc_result_t hw_send(void *ctx, dcc_packet_t *pkt, bool *ack)
 
 /* ---- task ------------------------------------------------------------- */
 
+/* The programming track's own limit (250 mA) is for the track switched on
+ * outside a CV operation. During one it trips at the main track's limit
+ * instead, as DCC-EX does during ACK operations. A short still trips, at
+ * the main limit, but a decoder with a wiring fault can draw up to it for
+ * the length of the operation. */
+static void track_power(bool on)
+{
+    if (on) {
+        motor_override_limit(g_motor, g_main->current_limit);
+        motor_set_power(g_motor, true);
+    } else {
+        motor_set_power(g_motor, false);
+        motor_override_limit(g_motor, 0);
+    }
+}
+
 void task_servicemode(void *params)
 {
     (void)params;
     static const svc_io_t io = { .send = hw_send, .ctx = NULL };
-    bool powered = false;
     svc_request_t req;
 
     for (;;) {
-        if (xQueueReceive(g_queue, &req, pdMS_TO_TICKS(IDLE_POWER_OFF_MS))
+        if (xQueueReceive(g_queue, &req, pdMS_TO_TICKS(IDLE_RECHECK_MS))
                 != pdTRUE) {
             /* Idle: keep the track off. Re-asserted every idle period, not
              * just once — the track monitor's overload retry on the other
              * core can race a power-off and switch the track back on. */
-            motor_set_power(g_motor, false);
-            powered = false;
+            track_power(false);
             continue;
         }
 
-        if (!powered || track_tripped()) {
-            /* The PIO has been sending reset packets all along, so the
-             * decoder sees a clean power-on cycle. */
-            motor_set_power(g_motor, true);
-            powered = true;
-            vTaskDelay(pdMS_TO_TICKS(POWER_ON_SETTLE_MS));
-        }
+        /* The PIO has been sending reset packets all along, so the decoder
+         * sees a clean power-on cycle. */
+        track_power(true);
+        vTaskDelay(pdMS_TO_TICKS(POWER_ON_SETTLE_MS));
 
         uint8_t value = req.value;
         svc_result_t res = (req.op == SVC_OP_READ)
                          ? svc_cv_read(&io, req.cv, &value)
                          : svc_cv_write(&io, req.cv, req.value);
-        if (res == SVC_SHORT) {
-            motor_set_power(g_motor, false);
-            powered = false;
-        }
+        if (req.op == SVC_OP_WRITE && res != SVC_SHORT)
+            vTaskDelay(pdMS_TO_TICKS(WRITE_HOLD_MS));
+        track_power(false);
         req.done(res, value, req.ctx);
     }
 }

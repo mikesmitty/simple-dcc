@@ -12,11 +12,11 @@
  * signal pin and idles on NMRA reset packets; decoder ACKs are read from
  * the motor channel's current sense. Operations run one at a time on
  * task_servicemode: callers submit a request and get a callback, so the
- * LCC task never blocks on the ~1 s a CV read takes.
+ * LCC task never blocks on the few seconds a CV read takes.
  *
- * Track power comes on for the first request and stays on between
- * back-to-back requests (a DecoderPro sheet read is hundreds of them),
- * then goes off after an idle second.
+ * Track power is on only for the length of each request, as in DCC-EX:
+ * every operation starts with a power-on cycle and the track goes off as
+ * soon as it finishes.
  */
 
 typedef enum {
@@ -30,8 +30,10 @@ typedef void (*servicemode_done_fn)(svc_result_t result, uint8_t value,
                                     void *ctx);
 
 /* One-time init before the scheduler starts. Must be called after
- * motor_init(prog_motor). Returns false if PIO2 can't be claimed. */
-bool servicemode_init(motor_t *prog_motor);
+ * motor_init() for both motors. While Service Mode has the programming
+ * track powered it trips at main_motor's limit, not its own. Returns false
+ * if PIO2 can't be claimed. */
+bool servicemode_init(motor_t *prog_motor, const motor_t *main_motor);
 
 /* Queue a CV operation (`cv` is 1-based). Returns SVC_OK if accepted —
  * `done` is then called exactly once — or SVC_BUSY / SVC_UNAVAILABLE
