@@ -12,10 +12,10 @@
 
 #include "util/dbg.h"
 
-#define DISPLAY_W         128
-#define DISPLAY_H         64
-#define DISPLAY_PAGES     (DISPLAY_H / 8)        // 8 pages of 128 bytes
-#define FRAMEBUFFER_SIZE  (DISPLAY_W * DISPLAY_PAGES)
+#define DISPLAY_WIDTH     128
+#define DISPLAY_HEIGHT    64
+#define DISPLAY_PAGES     (DISPLAY_HEIGHT / 8)   // 8 pages of 128 bytes
+#define FRAMEBUFFER_SIZE  (DISPLAY_WIDTH * DISPLAY_PAGES)
 #define I2C_CLOCK_HZ      400000
 #define SPLASH_MS         2000
 #define REFRESH_MS        250    // ~4 Hz — also the overcurrent flash period
@@ -170,7 +170,7 @@ static bool ssd1306_cmd_list(const uint8_t *cmds, size_t n) {
 static bool ssd1306_write_framebuffer(void) {
     // Set addressing to cover the full 128x64 GDDRAM.
     static const uint8_t setup[] = {
-        0x21, 0, DISPLAY_W - 1,   // column address start/end
+        0x21, 0, DISPLAY_WIDTH - 1,   // column address start/end
         0x22, 0, DISPLAY_PAGES - 1,  // page address start/end
     };
     if (!ssd1306_cmd_list(setup, sizeof(setup))) return false;
@@ -179,9 +179,9 @@ static bool ssd1306_write_framebuffer(void) {
     // scatter-gather write, so build a small stack prefix and send the
     // framebuffer in page-sized chunks to keep stack use bounded.
     for (uint8_t page = 0; page < DISPLAY_PAGES; page++) {
-        uint8_t chunk[1 + DISPLAY_W];
+        uint8_t chunk[1 + DISPLAY_WIDTH];
         chunk[0] = SSD1306_DATA;
-        memcpy(&chunk[1], &s_framebuffer[page * DISPLAY_W], DISPLAY_W);
+        memcpy(&chunk[1], &s_framebuffer[page * DISPLAY_WIDTH], DISPLAY_WIDTH);
         int n = i2c_write_timeout_us(s_i2c, s_i2c_addr, chunk, sizeof(chunk),
                                      false, 50000);
         if (n != (int)sizeof(chunk)) return false;
@@ -223,15 +223,15 @@ static void fb_clear(void) {
 }
 
 static void fb_draw_char(uint8_t x, uint8_t row, char c) {
-    if (x + 6 > DISPLAY_W || row >= DISPLAY_PAGES) return;
+    if (x + 6 > DISPLAY_WIDTH || row >= DISPLAY_PAGES) return;
     if (c < 0x20 || c > 0x7E) c = '?';
     const uint8_t *glyph = FONT_6X8[(uint8_t)c - 0x20];
-    uint8_t *page = &s_framebuffer[row * DISPLAY_W + x];
+    uint8_t *page = &s_framebuffer[row * DISPLAY_WIDTH + x];
     for (int i = 0; i < 6; i++) page[i] = glyph[i];
 }
 
 static void fb_draw_string(uint8_t x, uint8_t row, const char *s) {
-    while (*s && x + 6 <= DISPLAY_W) {
+    while (*s && x + 6 <= DISPLAY_WIDTH) {
         fb_draw_char(x, row, *s++);
         x += 6;
     }
