@@ -60,9 +60,14 @@ static const lcc_memspace_handler_t g_node_spaces[] = {
 
 static const uint8_t g_cfg_init[16] = { 0x10, 0x11, 0x12, 0x13 };
 static uint8_t g_cfg[16];
+static uint16_t g_cfg_read_error;  /* nonzero: cfg_read fails with it */
 static uint16_t cfg_read(lcc_node_t *node, uint32_t addr, uint16_t count,
-                         uint8_t *out) {
+                         uint8_t *out, uint16_t *error) {
     (void)node;
+    if (g_cfg_read_error) {
+        *error = g_cfg_read_error;
+        return 0;
+    }
     memcpy(out, &g_cfg[addr], count);
     return count;
 }
@@ -100,6 +105,7 @@ static void reset_all(void) {
     g_complete_inline = false;
     memcpy(g_cfg, g_cfg_init, sizeof(g_cfg));
     g_cfg_writes = 0;
+    g_cfg_read_error = 0;
     g_reboots = 0;
     g_factory_resets = 0;
 
@@ -442,6 +448,41 @@ static void test_sync_space_unchanged(void) {
     printf("  PASS: synchronous spaces still reply inline\n");
 }
 
+static void test_sync_read_error_replies_failed(void) {
+    reset_all();
+    g_cfg_read_error = LCC_ERR_UNIMPLEMENTED_CMD;
+    uint8_t low_bits[7] = { 0x20, 0x41, 0, 0, 0, 1, 2 };  /* 0xFD @1, 2 bytes */
+    lcc_memconfig_handle(&g_node, 0x123, low_bits, sizeof(low_bits));
+    const uint8_t want[] = { 0x20, 0x59, 0, 0, 0, 1, 0x10, 0x42 };
+    assert(g_sent_count == 1);
+    assert_bytes(&g_sent[0], want, sizeof(want));
+
+    uint8_t pkt[16];
+    uint8_t len = mc_read(pkt, 3, 0xFD, 1);      /* explicit space byte */
+    lcc_memconfig_handle(&g_node, 0x123, pkt, len);
+    const uint8_t want_explicit[] = { 0x20, 0x58, 0, 0, 0, 3, 0xFD, 0x10, 0x42 };
+    assert(g_sent_count == 2);
+    assert_bytes(&g_sent[1], want_explicit, sizeof(want_explicit));
+    printf("  PASS: synchronous read error becomes Read Reply Failed\n");
+}
+
+static void test_sync_read_past_end_is_short(void) {
+    reset_all();
+    uint8_t pkt[16];
+    uint8_t len = mc_read(pkt, sizeof(g_cfg) - 1, 0xFD, 4);  /* last byte + 3 */
+    lcc_memconfig_handle(&g_node, 0x123, pkt, len);
+    const uint8_t want[] = { 0x20, 0x50, 0, 0, 0, 15, 0xFD, 0x00 };
+    assert(g_sent_count == 1);
+    assert_bytes(&g_sent[0], want, sizeof(want));
+
+    len = mc_read(pkt, sizeof(g_cfg), 0xFD, 4);  /* wholly past the end */
+    lcc_memconfig_handle(&g_node, 0x123, pkt, len);
+    const uint8_t empty[] = { 0x20, 0x50, 0, 0, 0, 16, 0xFD };
+    assert(g_sent_count == 2);
+    assert_bytes(&g_sent[1], empty, sizeof(empty));
+    printf("  PASS: synchronous read past the end gets a short reply\n");
+}
+
 int main(void) {
     printf("test_lcc_memconfig:\n");
     test_check_ok_flags();
@@ -458,6 +499,8 @@ int main(void) {
     test_complete_inside_defer();
     test_stray_complete_ignored();
     test_sync_space_unchanged();
+    test_sync_read_error_replies_failed();
+    test_sync_read_past_end_is_short();
     printf("All LCC memconfig tests passed.\n");
     return 0;
 }

@@ -26,10 +26,12 @@
 
 /* Read `count` bytes from `space` at `addr` into `out`. Return the
  * number of bytes actually produced (may be less than `count` near the
- * end of the space). Implementations must never write past `out`. */
+ * end of the space). Implementations must never write past `out`. If the
+ * address can't be read at all, set `*error` (an OpenLCB error code; it
+ * starts at 0) and the requester gets a Read Reply Failed carrying it. */
 typedef uint16_t (*lcc_memspace_read_fn)(lcc_node_t *node,
                                          uint32_t addr, uint16_t count,
-                                         uint8_t *out);
+                                         uint8_t *out, uint16_t *error);
 
 /* Write `count` bytes from `in` to `space` at `addr`. Return the number
  * of bytes accepted. Read-only spaces should set this to NULL. */

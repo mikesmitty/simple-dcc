@@ -745,25 +745,51 @@ static void test_cv_space_direct_write_past_cv_range_ignored(void) {
     printf("  PASS: CV space ignores direct writes past CV 1024\n");
 }
 
-static void test_cv_space_direct_read_returns_no_data(void) {
+static void assert_cv_read_fails(lcc_node_t *n, uint32_t addr, uint16_t err) {
+    uint8_t pkt[16];
+    uint8_t len = mc_read(pkt, addr, 1);
+    last_datagram.calls = 0;
+    lcc_memconfig_handle(n, 0x123, pkt, len);
+
+    assert(last_datagram.calls == 1);
+    assert(last_datagram.len == 9);
+    assert(last_datagram.data[1] == 0x58);      /* READ_REPLY | FAILED */
+    assert(last_datagram.data[2] == (uint8_t)(addr >> 24));
+    assert(last_datagram.data[5] == (uint8_t)addr);
+    assert(last_datagram.data[6] == 0xF8);
+    assert(last_datagram.data[7] == (uint8_t)(err >> 8));
+    assert(last_datagram.data[8] == (uint8_t)err);
+}
+
+static void test_cv_space_reads_fail_without_railcom(void) {
     reset_all();
     lcc_node_t n; lcc_train_state_t t;
     init_node_with_train(&n, &t, 42, false, 0xABC);
     lcc_traction_register_cv_space(&n);
 
-    /* POM reads need RailCom; until then the reply carries no data,
-     * which JMRI reports as a failed read. */
-    uint8_t pkt[16];
-    uint8_t len = mc_read(pkt, 28, 1);
-    lcc_memconfig_handle(&n, 0x123, pkt, len);
-
-    assert(last_datagram.calls == 1);
-    assert(last_datagram.data[1] == 0x50);      /* READ_REPLY, explicit space */
-    assert(last_datagram.data[6] == 0xF8);
-    assert(last_datagram.len == 7);             /* header only */
+    /* Reading a CV on the main needs RailCom; until then it fails with
+     * "not implemented", which JMRI shows as such. */
+    assert_cv_read_fails(&n, 28, LCC_ERR_UNIMPLEMENTED_CMD);        /* CV 29 */
+    assert_cv_read_fails(&n, 1023, LCC_ERR_UNIMPLEMENTED_CMD);      /* CV 1024 */
+    assert_cv_read_fails(&n, 0x7F000004u, LCC_ERR_UNIMPLEMENTED_CMD);
+    assert_cv_read_fails(&n, 0x7F000006u, LCC_ERR_UNIMPLEMENTED_CMD);
+    /* Nothing lives between the direct CVs and the indirect registers. */
+    assert_cv_read_fails(&n, 1024, LCC_ERR_OUT_OF_BOUNDS);
+    assert_cv_read_fails(&n, 0x7EFFFFFFu, LCC_ERR_OUT_OF_BOUNDS);
     assert(last_pom.calls == 0);
 
-    printf("  PASS: CV space direct-address read returns no data\n");
+    /* The CV index register still reads back. */
+    t.pom_cv_index = 0x0102;
+    uint8_t pkt[16];
+    uint8_t len = mc_read(pkt, 0x7F000000u, 4);
+    last_datagram.calls = 0;
+    lcc_memconfig_handle(&n, 0x123, pkt, len);
+    const uint8_t want[] = { 0x20, 0x50, 0x7F, 0, 0, 0, 0xF8, 0, 0, 1, 2 };
+    assert(last_datagram.calls == 1);
+    assert(last_datagram.len == sizeof(want));
+    assert(memcmp(last_datagram.data, want, sizeof(want)) == 0);
+
+    printf("  PASS: CV space reads fail with an error until RailCom\n");
 }
 
 static void test_cv_space_get_space_info(void) {
@@ -815,7 +841,7 @@ int main(void) {
     test_cv_space_direct_write_poms();
     test_cv_space_direct_write_long_address();
     test_cv_space_direct_write_past_cv_range_ignored();
-    test_cv_space_direct_read_returns_no_data();
+    test_cv_space_reads_fail_without_railcom();
     printf("All LCC traction tests passed.\n");
     return 0;
 }

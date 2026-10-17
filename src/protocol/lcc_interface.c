@@ -166,8 +166,8 @@ static void flash_flush_timer_callback(TimerHandle_t timer) {
 static uint32_t g_cdi_size;
 
 static uint16_t cdi_read(lcc_node_t *node, uint32_t addr, uint16_t count,
-                         uint8_t *out) {
-    (void)node;
+                         uint8_t *out, uint16_t *error) {
+    (void)node; (void)error;
     if (addr >= g_cdi_size) return 0;
     if ((uint32_t)addr + count > g_cdi_size)
         count = (uint16_t)(g_cdi_size - addr);
@@ -179,8 +179,8 @@ static uint16_t cdi_read(lcc_node_t *node, uint32_t addr, uint16_t count,
  * kick the flash flush timer; UPDATE_COMPLETE forces an immediate flush
  * via the same mechanism. */
 static uint16_t config_read(lcc_node_t *node, uint32_t addr, uint16_t count,
-                            uint8_t *out) {
-    (void)node;
+                            uint8_t *out, uint16_t *error) {
+    (void)node; (void)error;
     if (addr >= CONFIG_MEM_SIZE) return 0;
     if ((uint32_t)addr + count > CONFIG_MEM_SIZE)
         count = (uint16_t)(CONFIG_MEM_SIZE - addr);
@@ -248,8 +248,8 @@ static void config_update_complete(lcc_node_t *node) {
 #define ACDI_USER_VERSION  2
 
 static uint16_t acdi_user_read(lcc_node_t *node, uint32_t addr, uint16_t count,
-                               uint8_t *out) {
-    (void)node;
+                               uint8_t *out, uint16_t *error) {
+    (void)node; (void)error;
     if (addr >= ACDI_USER_SIZE) return 0;
     if ((uint32_t)addr + count > ACDI_USER_SIZE)
         count = (uint16_t)(ACDI_USER_SIZE - addr);
@@ -303,8 +303,8 @@ static void acdi_mfg_init(void) {
 }
 
 static uint16_t acdi_mfg_read(lcc_node_t *node, uint32_t addr, uint16_t count,
-                              uint8_t *out) {
-    (void)node;
+                              uint8_t *out, uint16_t *error) {
+    (void)node; (void)error;
     if (addr >= ACDI_MFG_SIZE) return 0;
     if ((uint32_t)addr + count > ACDI_MFG_SIZE)
         count = (uint16_t)(ACDI_MFG_SIZE - addr);

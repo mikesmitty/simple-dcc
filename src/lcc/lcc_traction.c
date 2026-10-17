@@ -54,7 +54,7 @@ enum {
 };
 
 static uint16_t cv_space_read(lcc_node_t *node, uint32_t addr,
-                              uint16_t count, uint8_t *out)
+                              uint16_t count, uint8_t *out, uint16_t *error)
 {
     if (!node->train) return 0;
 
@@ -74,10 +74,15 @@ static uint16_t cv_space_read(lcc_node_t *node, uint32_t addr,
         return count;
     }
 
-    /* CV_VALUE read is the RailCom-fetch path — deferred to Phase 3.
-     * Return zero bytes for now; JMRI surfaces this as a read failure. */
-    (void)count;
-    (void)out;
+    /* Reading a CV on the main needs RailCom (Phase 3), as do the verify
+     * registers. JMRI shows this error as "not implemented". */
+    if (addr < CV_DIRECT_COUNT || addr >= CV_OFFSET_VALUE) {
+        *error = LCC_ERR_UNIMPLEMENTED_CMD;
+        return 0;
+    }
+
+    /* The gap between the direct CVs and the indirect registers. */
+    *error = LCC_ERR_OUT_OF_BOUNDS;
     return 0;
 }
 
@@ -133,6 +138,8 @@ static uint16_t cv_space_write(lcc_node_t *node, uint32_t addr,
     if (addr == CV_OFFSET_VERIFY_VALUE && count >= 1)
         return 1;
 
+    /* Unmapped: dropped, but the requester sees success. See the TODO at
+     * the end of handle_write in lcc_memconfig.c. */
     return 0;
 }
 

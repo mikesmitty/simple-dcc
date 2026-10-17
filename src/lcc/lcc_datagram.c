@@ -5,10 +5,10 @@
 
 #include <string.h>
 
-/* OpenLCB datagram rejection codes — only the ones the stack actually
- * emits are named here. Full list lives in the OpenLCB Datagram S&TN. */
-#define LCC_DG_ERR_BUFFER_UNAVAILABLE 0x2040
-#define LCC_DG_ERR_OUT_OF_ORDER       0x6000
+/* Rejection codes follow OpenMRN (Datagram.cxx, DatagramCan.cxx): a
+ * permanent error for datagrams that can never be taken, OUT_OF_ORDER
+ * (temporary, so the sender resends) for frames that arrive without the
+ * rest of their datagram. */
 
 void lcc_datagram_send_ok(const lcc_node_t *node, uint16_t dst_alias)
 {
@@ -85,8 +85,10 @@ void lcc_datagram_send(const lcc_node_t *node, uint16_t dst_alias,
 bool lcc_datagram_dispatch(lcc_node_t *node, uint16_t src_alias,
                            const uint8_t *payload, uint8_t len)
 {
-    if (len < 1)
+    if (len < 1) {
+        lcc_datagram_send_rejected(node, src_alias, LCC_ERR_PERMANENT);
         return false;
+    }
 
     switch (payload[0]) {
     case LCC_MEMCONFIG_CMD: {
@@ -101,9 +103,9 @@ bool lcc_datagram_dispatch(lcc_node_t *node, uint16_t src_alias,
         return true;
     }
     default:
-        /* Unknown datagram protocol — reject rather than silently drop so
-         * the sender's state machine unblocks. */
-        lcc_datagram_send_rejected(node, src_alias, LCC_DG_ERR_BUFFER_UNAVAILABLE);
+        /* Unknown datagram protocol. Permanent, so the sender gives up
+         * instead of retrying. */
+        lcc_datagram_send_rejected(node, src_alias, LCC_ERR_UNIMPLEMENTED_CMD);
         return false;
     }
 }
@@ -127,6 +129,11 @@ void lcc_datagram_handle_frame(lcc_node_t *node, const lcc_frame_t *frame)
         break;
 
     case LCC_FRAME_DATAGRAM_FIRST:
+        /* One buffer per node: a FIRST from a second sender takes it over,
+         * and the first sender's remaining frames are rejected as out of
+         * order so it resends. A FIRST from the same sender means it gave
+         * up on its last datagram. Either way nobody is locked out by a
+         * sender that vanished mid-datagram. */
         dg->src_alias = src;
         dg->len       = 0;
         dg->active    = true;
@@ -137,10 +144,13 @@ void lcc_datagram_handle_frame(lcc_node_t *node, const lcc_frame_t *frame)
         break;
 
     case LCC_FRAME_DATAGRAM_MIDDLE:
-        if (!dg->active || dg->src_alias != src)
+        if (!dg->active || dg->src_alias != src) {
+            /* The buffer, if busy, belongs to someone else: leave it. */
+            lcc_datagram_send_rejected(node, src, LCC_ERR_OUT_OF_ORDER);
             break;
+        }
         if ((uint16_t)(dg->len + frame->dlc) > LCC_DATAGRAM_MAX) {
-            lcc_datagram_send_rejected(node, src, LCC_DG_ERR_BUFFER_UNAVAILABLE);
+            lcc_datagram_send_rejected(node, src, LCC_ERR_PERMANENT);
             reset_rx(dg);
             break;
         }
@@ -150,14 +160,13 @@ void lcc_datagram_handle_frame(lcc_node_t *node, const lcc_frame_t *frame)
 
     case LCC_FRAME_DATAGRAM_FINAL:
         if (!dg->active || dg->src_alias != src) {
-            /* No matching FIRST — treat as a single-frame datagram so we
-             * at least attempt to process it rather than silently drop. */
-            lcc_datagram_dispatch(node, src, frame->data, frame->dlc);
-            reset_rx(dg);
+            /* The head of this datagram is missing, so it can't be
+             * processed; the sender resends the whole thing. */
+            lcc_datagram_send_rejected(node, src, LCC_ERR_OUT_OF_ORDER);
             break;
         }
         if ((uint16_t)(dg->len + frame->dlc) > LCC_DATAGRAM_MAX) {
-            lcc_datagram_send_rejected(node, src, LCC_DG_ERR_BUFFER_UNAVAILABLE);
+            lcc_datagram_send_rejected(node, src, LCC_ERR_PERMANENT);
             reset_rx(dg);
             break;
         }
