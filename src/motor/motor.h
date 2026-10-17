@@ -22,6 +22,7 @@ typedef struct {
     // Current sensing
     uint16_t current_limit;     // ADC units
     uint16_t last_reading;      // Last ADC reading
+    uint16_t alert_peak;        // Highest reading since entering ALERT
 
     // Power state FSM
     power_mode_t state;

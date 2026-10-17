@@ -45,6 +45,7 @@ void motor_init(motor_t *m, char track_id,
     m->adc_channel = adc_channel;
     m->current_limit = motor_ma_to_raw(current_limit_ma);
     m->last_reading = 0;
+    m->alert_peak = 0;
     m->state = POWER_MODE_OFF;
     m->prev_state = POWER_MODE_OFF;
     m->state_entered_tick = 0;
@@ -128,28 +129,36 @@ static void handle_on_state(motor_t *m) {
         return;
     }
 
-    printf("TRACK %c ALERT%s%s\n", m->track_id,
-           fault ? " FAULT" : "", overcurrent ? " OVERCURRENT" : "");
+    printf("TRACK %c ALERT%s%s %umA\n", m->track_id,
+           fault ? " FAULT" : "", overcurrent ? " OVERCURRENT" : "",
+           motor_raw_to_ma(m->last_reading));
     motor_set_mode(m, POWER_MODE_ALERT);
+    m->alert_peak = m->last_reading;
 }
 
 static void handle_alert_state(motor_t *m) {
     uint32_t elapsed = ms_since(m->state_entered_tick);
     bool fault = motor_check_fault(m);
     bool overcurrent = motor_check_overcurrent(m);
+    if (m->last_reading > m->alert_peak)
+        m->alert_peak = m->last_reading;
 
     if (fault || overcurrent) {
         m->last_bad_tick = ticks_now();
         if (elapsed < OVERCURRENT_TIMEOUT_MS) return;
 
-        printf("TRACK %c OVERLOAD after %lums\n", m->track_id, (unsigned long)elapsed);
+        printf("TRACK %c OVERLOAD after %lums (%umA, peak %umA, limit %umA)\n",
+               m->track_id, (unsigned long)elapsed,
+               motor_raw_to_ma(m->last_reading), motor_raw_to_ma(m->alert_peak),
+               motor_raw_to_ma(m->current_limit));
         motor_set_mode(m, POWER_MODE_OVERLOAD);
         return;
     }
 
     // No faults — check if alert window has passed
     if (elapsed > ALERT_WINDOW_MS) {
-        printf("TRACK %c NORMAL\n", m->track_id);
+        printf("TRACK %c NORMAL (peak %umA)\n", m->track_id,
+               motor_raw_to_ma(m->alert_peak));
         motor_set_mode(m, POWER_MODE_ON);
     }
 }
