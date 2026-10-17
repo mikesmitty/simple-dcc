@@ -37,6 +37,7 @@ typedef struct lcc_train_state {
     uint8_t       fn_state_hi;       /* F64..F68 in bits 0..4 */
     bool          emergency;
     uint64_t      controller_owner;  /* 0 = unowned; otherwise controller node ID */
+    uint16_t      controller_alias;  /* alias the owner assigned from; 0 = unknown */
     uint64_t      pending_search_event;  /* deferred Producer Identified Valid until alias confirms */
     lcc_consist_entry_t consist[LCC_MAX_CONSIST_SLAVES];
     /* Addressed-message reassembly for multi-frame traction commands
@@ -81,5 +82,11 @@ void lcc_traction_register_cv_space(lcc_node_t *train_node);
  * already been verified to be `node`. Caller has not stripped the addressed
  * header. Frames without `node->train` set are silently dropped. */
 void lcc_traction_handle_frame(lcc_node_t *node, const lcc_frame_t *frame);
+
+/* Watch a CAN control frame for the controller's alias going away (AMR, or
+ * an AMD naming another node), so a Controller Changed Notify is never sent
+ * to an alias the controller no longer holds. Every train node should see
+ * every control frame. */
+void lcc_traction_handle_control(lcc_node_t *node, const lcc_frame_t *frame);
 
 #endif /* LCC_TRACTION_H */

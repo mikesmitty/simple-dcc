@@ -151,6 +151,9 @@ static void handle_control(lcc_node_t *node, const lcc_frame_t *f)
     if (lcc_get_src(f->id) == node->alias)
         lcc_alias_on_collision(node);
 
+    if (node->train)
+        lcc_traction_handle_control(node, f);
+
     if (node->alias_state != LCC_A_CONFIRMED)
         return;
 

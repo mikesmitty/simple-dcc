@@ -98,7 +98,7 @@
 #define LCC_CTRLREQ_ASSIGN              0x01  /* + flags + 6-byte node ID (+ 2-byte alias if flag 0x01) */
 #define LCC_CTRLREQ_RELEASE             0x02  /* + flags + 6-byte node ID (+ 2-byte alias if flag 0x01) */
 #define LCC_CTRLREQ_QUERY               0x03  /* no payload */
-#define LCC_CTRLREQ_NOTIFY_CHANGED      0x04  /* sent *by* train, not received */
+#define LCC_CTRLREQ_NOTIFY_CHANGED      0x04  /* + flags + new controller's 6-byte node ID; sent *by* train to the controller losing it */
 
 /* Flags byte (payload[2]) for ASSIGN / RELEASE / QUERY reply */
 #define LCC_CTRLFLAG_ALIAS_PRESENT      0x01

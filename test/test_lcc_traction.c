@@ -90,11 +90,13 @@ typedef struct {
 } reply_rec_t;
 
 static reply_rec_t last_reply;
+static reply_rec_t prev_reply;  /* the send before last_reply */
 
 void lcc_node_send_addressed(const lcc_node_t *node, uint16_t mti,
                              uint16_t dst_alias,
                              const uint8_t *payload, uint16_t payload_len) {
     (void)node;
+    prev_reply = last_reply;
     last_reply.mti = mti;
     last_reply.dst_alias = dst_alias;
     last_reply.payload_len = payload_len < sizeof(last_reply.payload)
@@ -158,6 +160,7 @@ static void reset_all(void) {
     memset(&last_datagram, 0, sizeof(last_datagram));
     memset(&last_datagram_ok, 0, sizeof(last_datagram_ok));
     memset(&last_reply, 0, sizeof(last_reply));
+    memset(&prev_reply, 0, sizeof(prev_reply));
     memset(g_mock_registry, 0, sizeof(g_mock_registry));
     g_mock_count = 0;
 
@@ -441,6 +444,119 @@ static void test_controller_assign_query_release(void) {
     assert(t.controller_owner == owner);
 
     printf("  PASS: controller assign/query/release\n");
+}
+
+/* A second throttle assigning itself takes the train and the first one is
+ * told, with a Controller Changed Notify naming the new controller. */
+static void assign_from(lcc_node_t *n, uint16_t src_alias, uint64_t owner) {
+    uint8_t assign[9] = { LCC_TRAC_CONTROLLER_CFG, LCC_CTRLREQ_ASSIGN, 0x00 };
+    lcc_node_id_to_buf(owner, &assign[3]);
+    lcc_frame_t f = make_tc_frame(src_alias, n->alias, assign, sizeof(assign));
+    lcc_traction_handle_frame(n, &f);
+}
+
+static void assert_assign_ok_to(uint16_t dst_alias) {
+    assert(last_reply.mti == LCC_MTI_TRACTION_CONTROL_REPLY);
+    assert(last_reply.dst_alias == dst_alias);
+    assert(last_reply.payload_len == 3);
+    assert(last_reply.payload[0] == LCC_TRAC_CONTROLLER_CFG);
+    assert(last_reply.payload[1] == LCC_CTRLREQ_ASSIGN);
+    assert(last_reply.payload[2] == LCC_CTRLRESP_OK);
+}
+
+static lcc_frame_t make_control_frame(uint16_t src_alias, uint16_t field,
+                                      uint64_t node_id) {
+    lcc_frame_t f;
+    memset(&f, 0, sizeof(f));
+    f.id = lcc_control_id(src_alias, field, 0);
+    lcc_node_id_to_buf(node_id, f.data);
+    f.dlc = 6;
+    return f;
+}
+
+static void test_controller_steal_notifies_old_owner(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 42, false, 0x456);
+
+    uint64_t first = 0x02010D000001ULL, second = 0x050101010101ULL;
+    assign_from(&n, 0x123, first);
+    assert(last_reply.calls == 1);
+    assert(t.controller_alias == 0x123);
+
+    assign_from(&n, 0x234, second);
+    assert(last_reply.calls == 3);
+    assert(prev_reply.mti == LCC_MTI_TRACTION_CONTROL_COMMAND);
+    assert(prev_reply.dst_alias == 0x123);
+    assert(prev_reply.payload_len == 9);
+    assert(prev_reply.payload[0] == LCC_TRAC_CONTROLLER_CFG);
+    assert(prev_reply.payload[1] == LCC_CTRLREQ_NOTIFY_CHANGED);
+    assert(prev_reply.payload[2] == 0x00);
+    assert(lcc_node_id_from_buf(&prev_reply.payload[3]) == second);
+    assert_assign_ok_to(0x234);
+    assert(t.controller_owner == second);
+    assert(t.controller_alias == 0x234);
+
+    printf("  PASS: controller steal notifies the old controller\n");
+}
+
+static void test_controller_assign_without_notice(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 42, false, 0x456);
+    uint64_t first = 0x02010D000001ULL, second = 0x050101010101ULL;
+
+    /* The owner assigning again, even from a new alias, is not a steal;
+     * the train follows it to the new alias. */
+    assign_from(&n, 0x123, first);
+    assign_from(&n, 0x321, first);
+    assert(last_reply.calls == 2);
+    assert_assign_ok_to(0x321);
+    assert(t.controller_alias == 0x321);
+
+    /* After a release there is no one to tell. */
+    uint8_t release[9] = { LCC_TRAC_CONTROLLER_CFG, LCC_CTRLREQ_RELEASE, 0x00 };
+    lcc_node_id_to_buf(first, &release[3]);
+    lcc_frame_t f = make_tc_frame(0x321, 0x456, release, sizeof(release));
+    lcc_traction_handle_frame(&n, &f);
+    assert(t.controller_alias == 0);
+    assign_from(&n, 0x234, second);
+    assert(last_reply.calls == 3);
+    assert_assign_ok_to(0x234);
+
+    printf("  PASS: controller assign without a notice\n");
+}
+
+static void test_controller_alias_goes_stale(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 42, false, 0x456);
+    uint64_t first = 0x02010D000001ULL, second = 0x050101010101ULL;
+    assign_from(&n, 0x123, first);
+
+    /* Another node's frames and the owner re-announcing its own alias
+     * leave the alias alone. */
+    lcc_frame_t f = make_control_frame(0x124, LCC_CONTROL_AMR, 0x0A0000000002ULL);
+    lcc_traction_handle_control(&n, &f);
+    f = make_control_frame(0x123, LCC_CONTROL_AMD, first);
+    lcc_traction_handle_control(&n, &f);
+    assert(t.controller_alias == 0x123);
+
+    /* The owner gives the alias up: no notice on the next steal. */
+    f = make_control_frame(0x123, LCC_CONTROL_AMR, first);
+    lcc_traction_handle_control(&n, &f);
+    assert(t.controller_alias == 0);
+    assert(t.controller_owner == first);
+    assign_from(&n, 0x234, second);
+    assert(last_reply.calls == 2);
+    assert_assign_ok_to(0x234);
+
+    /* Another node announcing the owner's alias also makes it stale. */
+    f = make_control_frame(0x234, LCC_CONTROL_AMD, 0x0A0000000003ULL);
+    lcc_traction_handle_control(&n, &f);
+    assert(t.controller_alias == 0);
+
+    printf("  PASS: controller alias goes stale on AMR/AMD\n");
 }
 
 /* ---- CONSIST_CFG (ATTACH / QUERY / DETACH) ----------------------------- */
@@ -880,6 +996,9 @@ int main(void) {
     test_query_speeds_reply();
     test_query_function_reply();
     test_controller_assign_query_release();
+    test_controller_steal_notifies_old_owner();
+    test_controller_assign_without_notice();
+    test_controller_alias_goes_stale();
     test_consist_attach_query_detach();
     test_addressed_reassembly();
     test_hooks_null_detach();

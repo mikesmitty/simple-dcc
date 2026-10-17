@@ -267,6 +267,18 @@ static bool parse_assign_payload(const uint8_t *payload, uint8_t len,
     return true;
 }
 
+/* Notice to the controller losing the train: [0x20, 0x04, flags, NID(6)]
+ * naming the node that took it, sent as a Traction Control Command. */
+static void send_controller_changed(lcc_node_t *node, uint64_t new_owner)
+{
+    uint8_t notice[9] = { LCC_TRAC_CONTROLLER_CFG, LCC_CTRLREQ_NOTIFY_CHANGED,
+                          0x00 };
+    lcc_node_id_to_buf(new_owner, &notice[3]);
+    lcc_node_send_addressed(node, LCC_MTI_TRACTION_CONTROL_COMMAND,
+                            node->train->controller_alias,
+                            notice, sizeof(notice));
+}
+
 static void on_assign_controller(lcc_node_t *node, const uint8_t *payload,
                                  uint8_t len, uint16_t reply_to)
 {
@@ -281,12 +293,21 @@ static void on_assign_controller(lcc_node_t *node, const uint8_t *payload,
         return;
     }
 
-    /* "Steal" semantics: a second ASSIGN unconditionally overwrites the
-     * owner. OpenMRN does the same (TractionTrain.cxx:319 — the notify-old-
-     * owner branch is gated off). The spec wants a NOTIFY_CONTROLLER_CHANGED
-     * round-trip with the previous owner; deferred until we have a real
-     * use case that depends on it. */
-    node->train->controller_owner = new_owner;
+    /* A different throttle taking the train always wins, but the one losing
+     * it is told first: TrainControlS 6.1 has the train send Controller
+     * Changed Notify to the previous controller, and a throttle that isn't
+     * told (Interlock, for one) keeps showing the train as its own. The
+     * standard lets the train decide without waiting for the reply (JMRI's
+     * throttle doesn't handle the notice at all), so the Notify Reply that
+     * comes back is ignored. With no current alias for the old controller
+     * there is no one to tell. */
+    lcc_train_state_t *t = node->train;
+    if (t->controller_owner != 0 && t->controller_owner != new_owner &&
+        t->controller_alias != 0)
+        send_controller_changed(node, new_owner);
+
+    t->controller_owner = new_owner;
+    t->controller_alias = reply_to;
     lcc_node_send_addressed(node, LCC_MTI_TRACTION_CONTROL_REPLY,
                             reply_to, reply, sizeof(reply));
 }
@@ -300,15 +321,17 @@ static void on_release_controller(lcc_node_t *node, const uint8_t *payload,
 
     /* Only clear if the caller actually owns us — a stale release from a
      * throttle that never assigned should not free the train. */
-    if (node->train->controller_owner == released)
+    if (node->train->controller_owner == released) {
         node->train->controller_owner = 0;
+        node->train->controller_alias = 0;
+    }
 }
 
 static void on_query_controller(lcc_node_t *node, uint16_t reply_to)
 {
-    /* Reply: [0x20, 0x03, flags, NID(6)]. We don't cache the controller's
-     * alias, so bit 0 of flags stays clear and the optional 2-byte alias
-     * suffix is omitted. */
+    /* Reply: [0x20, 0x03, flags, NID(6)]. TrainControlS reserves bit 0 of
+     * flags (OpenMRN uses it to append the controller's alias), so it stays
+     * clear and only the node ID is sent. */
     uint8_t reply[9] = {
         LCC_TRAC_CONTROLLER_CFG,
         LCC_CTRLREQ_QUERY,
@@ -672,4 +695,20 @@ void lcc_traction_handle_frame(lcc_node_t *node, const lcc_frame_t *frame)
         t->rx_active = false;
         t->rx_len    = 0;
     }
+}
+
+void lcc_traction_handle_control(lcc_node_t *node, const lcc_frame_t *frame)
+{
+    if (!node || !node->train) return;
+    lcc_train_state_t *t = node->train;
+    if (t->controller_alias == 0 || lcc_get_src(frame->id) != t->controller_alias)
+        return;
+
+    /* The controller gave its alias up, or another node now holds it. A
+     * controller that comes back on a new alias assigns again from it. */
+    uint16_t field = lcc_get_control_field(frame->id);
+    if (field == LCC_CONTROL_AMR ||
+        (field == LCC_CONTROL_AMD && frame->dlc == 6 &&
+         lcc_node_id_from_buf(frame->data) != t->controller_owner))
+        t->controller_alias = 0;
 }
