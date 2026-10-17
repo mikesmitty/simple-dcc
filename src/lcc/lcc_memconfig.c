@@ -211,29 +211,112 @@ bool lcc_memconfig_deferred_pending(void)
            != DEFERRED_IDLE;
 }
 
-uint8_t lcc_memconfig_ack_flags(const lcc_node_t *node,
-                                const uint8_t *payload, uint8_t len)
+/* ---- request validation ----------------------------------------------- */
+
+static bool is_read_cmd(uint8_t cmd)
+{
+    return (cmd & LCC_MEMCFG_CMD_MASK) == LCC_MEMCFG_READ;
+}
+
+static bool is_write_cmd(uint8_t cmd)
+{
+    return (cmd & LCC_MEMCFG_CMD_MASK) == LCC_MEMCFG_WRITE;
+}
+
+typedef struct {
+    uint8_t                       space;
+    uint32_t                      addr;
+    uint8_t                       count;  /* read: requested; write: supplied */
+    const uint8_t                *data;   /* write payload; NULL for reads */
+    const lcc_memspace_handler_t *h;
+} rw_req_t;
+
+/* Decode a Read or Write and decide whether it can be served. Returns 0,
+ * or the error code to reject it with (same choices as OpenMRN's
+ * MemoryConfigHandler). A read past the end of a synchronous space is
+ * accepted and gets a short reply; on a deferred space start_deferred
+ * fails it with a reply. */
+static uint16_t parse_rw(const lcc_node_t *node, const uint8_t *buf,
+                         uint8_t len, rw_req_t *rq)
 {
     if (len < 7)
-        return 0;
-    uint8_t kind = payload[1] & 0xF0;
-    if (kind != LCC_MEMCFG_READ && kind != LCC_MEMCFG_WRITE)
-        return 0;
+        return LCC_ERR_INVALID_ARGUMENTS;
 
-    uint32_t addr;
-    uint8_t  data_offset;
-    uint8_t  space = decode_space(payload[1], payload, len, &addr,
-                                  &data_offset);
-    /* Same validity checks as handle_read/handle_write: a request they
-     * drop must not promise a reply. */
+    uint8_t data_offset;
+    rq->space = decode_space(buf[1], buf, len, &rq->addr, &data_offset);
     if (data_offset >= len)
+        return LCC_ERR_INVALID_ARGUMENTS;
+    rq->h = find_space(node, rq->space);
+
+    if (is_read_cmd(buf[1])) {
+        rq->count = buf[data_offset];
+        rq->data  = NULL;
+        if (rq->count == 0)
+            return LCC_ERR_INVALID_ARGUMENTS;
+        if (!rq->h || (!rq->h->defer && !rq->h->read))
+            return LCC_ERR_SPACE_UNKNOWN;
         return 0;
-    if (kind == LCC_MEMCFG_READ && payload[data_offset] == 0)
+    }
+
+    rq->count = (uint8_t)(len - data_offset);
+    rq->data  = buf + data_offset;
+    if (!rq->h)
+        return LCC_ERR_SPACE_UNKNOWN;
+    if (rq->h->read_only || (!rq->h->defer && !rq->h->write))
+        return LCC_ERR_WRITE_READ_ONLY;
+    if (!rq->h->defer && rq->addr >= rq->h->size)
+        return LCC_ERR_OUT_OF_BOUNDS;
+    return 0;
+}
+
+/* Spec requires the 6-byte node ID as confirmation. */
+static bool factory_reset_confirmed(const lcc_node_t *node,
+                                    const uint8_t *buf, uint8_t len)
+{
+    if (len < 8)
+        return false;
+    uint64_t confirm = ((uint64_t)buf[2] << 40) | ((uint64_t)buf[3] << 32)
+                     | ((uint64_t)buf[4] << 24) | ((uint64_t)buf[5] << 16)
+                     | ((uint64_t)buf[6] <<  8) |  (uint64_t)buf[7];
+    return confirm == node->id;
+}
+
+uint16_t lcc_memconfig_check(const lcc_node_t *node, const uint8_t *payload,
+                             uint8_t len, uint8_t *ok_flags)
+{
+    *ok_flags = 0;
+    if (len < 2)
+        return LCC_ERR_INVALID_ARGUMENTS;
+
+    uint8_t cmd = payload[1];
+    if (is_read_cmd(cmd) || is_write_cmd(cmd)) {
+        rw_req_t rq;
+        uint16_t error = parse_rw(node, payload, len, &rq);
+        if (error)
+            return error;
+        if (rq.h->defer)
+            *ok_flags = LCC_DATAGRAM_OK_REPLY_PENDING
+                      | LCC_MEMCFG_DEFER_TIMEOUT_EXP;
         return 0;
-    const lcc_memspace_handler_t *h = find_space(node, space);
-    if (!h || !h->defer)
+    }
+
+    switch (cmd) {
+    case LCC_MEMCFG_GET_SPACE_INFO:
+        return len < 3 ? LCC_ERR_INVALID_ARGUMENTS : 0;
+    case LCC_MEMCFG_UPDATE_COMPLETE:
         return 0;
-    return LCC_DATAGRAM_OK_REPLY_PENDING | LCC_MEMCFG_DEFER_TIMEOUT_EXP;
+    case LCC_MEMCFG_REBOOT:
+        return g_reboot ? 0 : LCC_ERR_UNIMPLEMENTED_SUBCMD;
+    case LCC_MEMCFG_FACTORY_RESET:
+        if (!g_factory_reset)
+            return LCC_ERR_UNIMPLEMENTED_SUBCMD;
+        return factory_reset_confirmed(node, payload, len)
+             ? 0 : LCC_ERR_INVALID_ARGUMENTS;
+    default:
+        /* Includes replies (we are never a memconfig client), options,
+         * lock, and freeze. */
+        return LCC_ERR_UNIMPLEMENTED_SUBCMD;
+    }
 }
 
 /* ---- GET_SPACE_INFO --------------------------------------------------- */
@@ -274,26 +357,20 @@ static void handle_get_space_info(lcc_node_t *node, uint16_t src_alias,
 static void handle_read(lcc_node_t *node, uint16_t src_alias,
                         const uint8_t *buf, uint8_t len)
 {
-    if (len < 7)
+    /* Anything parse_rw refuses was already rejected by
+     * lcc_memconfig_check. */
+    rw_req_t rq;
+    if (parse_rw(node, buf, len, &rq) != 0)
         return;
+    const lcc_memspace_handler_t *h = rq.h;
+    uint8_t  space = rq.space;
+    uint32_t addr  = rq.addr;
+    uint8_t  count = rq.count;
 
-    uint32_t addr;
-    uint8_t  data_offset;
-    uint8_t  space = decode_space(buf[1], buf, len, &addr, &data_offset);
-
-    if (data_offset >= len)
-        return;
-    uint8_t count = buf[data_offset];
-    if (count == 0)
-        return;
-
-    const lcc_memspace_handler_t *h = find_space(node, space);
-    if (h && h->defer) {
+    if (h->defer) {
         start_deferred(node, src_alias, buf[1], space, addr, count, NULL, h);
         return;
     }
-    if (!h || !h->read)
-        return;
 
     /* Clamp to space bounds. */
     if (addr >= h->size)
@@ -331,30 +408,20 @@ static void handle_read(lcc_node_t *node, uint16_t src_alias,
 static void handle_write(lcc_node_t *node, uint16_t src_alias,
                          const uint8_t *buf, uint8_t len)
 {
-    if (len < 7)
+    rw_req_t rq;
+    if (parse_rw(node, buf, len, &rq) != 0)
         return;
+    const lcc_memspace_handler_t *h = rq.h;
+    uint32_t addr  = rq.addr;
+    uint8_t  count = rq.count;
+    const uint8_t *write_data = rq.data;
 
-    uint32_t addr;
-    uint8_t  data_offset;
-    uint8_t  space = decode_space(buf[1], buf, len, &addr, &data_offset);
-
-    if (data_offset >= len)
-        return;
-
-    const lcc_memspace_handler_t *h = find_space(node, space);
-    uint8_t count = (uint8_t)(len - data_offset);
-    const uint8_t *write_data = buf + data_offset;
-
-    if (h && h->defer) {
-        start_deferred(node, src_alias, buf[1], space, addr, count,
+    if (h->defer) {
+        start_deferred(node, src_alias, buf[1], rq.space, addr, count,
                        write_data, h);
         return;
     }
-    if (!h || h->read_only || !h->write)
-        return;
 
-    if (addr >= h->size)
-        return;
     if ((uint32_t)addr + count > h->size)
         count = (uint8_t)(h->size - addr);
 
@@ -384,26 +451,18 @@ static void handle_update_complete(lcc_node_t *node)
     }
 }
 
-static void handle_reboot(lcc_node_t *node, uint16_t src_alias)
+/* lcc_datagram has already sent the Datagram OK for these. */
+static void handle_reboot(void)
 {
-    lcc_datagram_send_ok(node, src_alias);
     if (g_reboot)
         g_reboot();
 }
 
-static void handle_factory_reset(lcc_node_t *node, uint16_t src_alias,
+static void handle_factory_reset(lcc_node_t *node,
                                  const uint8_t *buf, uint8_t len)
 {
-    /* Spec requires the 6-byte node ID as confirmation. */
-    if (len < 8)
+    if (!factory_reset_confirmed(node, buf, len))
         return;
-    uint64_t confirm = ((uint64_t)buf[2] << 40) | ((uint64_t)buf[3] << 32)
-                     | ((uint64_t)buf[4] << 24) | ((uint64_t)buf[5] << 16)
-                     | ((uint64_t)buf[6] <<  8) |  (uint64_t)buf[7];
-    if (confirm != node->id)
-        return;
-
-    lcc_datagram_send_ok(node, src_alias);
     if (g_factory_reset)
         g_factory_reset(node);
 }
@@ -427,25 +486,25 @@ void lcc_memconfig_handle(lcc_node_t *node, uint16_t src_alias,
         return;
     }
     if (cmd == LCC_MEMCFG_REBOOT) {
-        handle_reboot(node, src_alias);
+        handle_reboot();
         return;
     }
     if (cmd == LCC_MEMCFG_FACTORY_RESET) {
-        handle_factory_reset(node, src_alias, payload, len);
+        handle_factory_reset(node, payload, len);
         return;
     }
 
-    /* Read commands: 0x40..0x4F (space in low 2 bits or 0 for explicit). */
-    if ((cmd & 0xF0) == 0x40) {
+    /* Read commands: 0x40..0x43 (space in low 2 bits or 0 for explicit). */
+    if (is_read_cmd(cmd)) {
         handle_read(node, src_alias, payload, len);
         return;
     }
 
-    /* Write commands: 0x00..0x0F. */
-    if ((cmd & 0xF0) == 0x00) {
+    /* Write commands: 0x00..0x03. */
+    if (is_write_cmd(cmd)) {
         handle_write(node, src_alias, payload, len);
         return;
     }
 
-    /* Unknown memconfig sub-command — ignore. */
+    /* Anything else was rejected by lcc_memconfig_check. */
 }

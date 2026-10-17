@@ -161,6 +161,7 @@
 #define LCC_MEMCONFIG_CMD           0x20
 
 /* Memory Config sub-commands (byte 1) */
+#define LCC_MEMCFG_CMD_MASK         0xFC  /* strips the space bits off READ/WRITE */
 #define LCC_MEMCFG_WRITE            0x00  /* Write, space in low 2 bits */
 #define LCC_MEMCFG_READ             0x40  /* Read, space in low 2 bits */
 #define LCC_MEMCFG_READ_REPLY       0x50  /* Read reply, space in low 2 bits */
@@ -194,8 +195,11 @@
  * maps to ProgListener statuses. */
 #define LCC_ERR_PERMANENT          0x1000
 #define LCC_ERR_TEMPORARY          0x2000
+#define LCC_ERR_UNIMPLEMENTED_SUBCMD 0x1041
 #define LCC_ERR_INVALID_ARGUMENTS  0x1080
+#define LCC_ERR_SPACE_UNKNOWN      0x1081
 #define LCC_ERR_OUT_OF_BOUNDS      0x1082
+#define LCC_ERR_WRITE_READ_ONLY    0x1083
 #define LCC_ERR_DCC_PGM_DISABLED   0x1021  /* no programming track available */
 #define LCC_ERR_DCC_NO_LOCO        0x2031  /* no decoder answered */
 #define LCC_ERR_DCC_FAILED_VERIFY  0x2032  /* decoder never ACKed the value */

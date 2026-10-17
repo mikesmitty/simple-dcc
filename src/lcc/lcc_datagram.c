@@ -89,11 +89,17 @@ bool lcc_datagram_dispatch(lcc_node_t *node, uint16_t src_alias,
         return false;
 
     switch (payload[0]) {
-    case LCC_MEMCONFIG_CMD:
-        lcc_datagram_send_ok_flags(node, src_alias,
-                                   lcc_memconfig_ack_flags(node, payload, len));
+    case LCC_MEMCONFIG_CMD: {
+        uint8_t  flags;
+        uint16_t error = lcc_memconfig_check(node, payload, len, &flags);
+        if (error) {
+            lcc_datagram_send_rejected(node, src_alias, error);
+            return false;
+        }
+        lcc_datagram_send_ok_flags(node, src_alias, flags);
         lcc_memconfig_handle(node, src_alias, payload, len);
         return true;
+    }
     default:
         /* Unknown datagram protocol — reject rather than silently drop so
          * the sender's state machine unblocks. */

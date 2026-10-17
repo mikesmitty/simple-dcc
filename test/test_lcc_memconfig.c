@@ -58,16 +58,35 @@ static const lcc_memspace_handler_t g_node_spaces[] = {
     { .space = 0xF8, .size = 1024, .defer = mock_defer },
 };
 
-static uint8_t g_cfg[16] = { 0x10, 0x11, 0x12, 0x13 };
+static const uint8_t g_cfg_init[16] = { 0x10, 0x11, 0x12, 0x13 };
+static uint8_t g_cfg[16];
 static uint16_t cfg_read(lcc_node_t *node, uint32_t addr, uint16_t count,
                          uint8_t *out) {
     (void)node;
     memcpy(out, &g_cfg[addr], count);
     return count;
 }
+static int g_cfg_writes;
+static uint16_t cfg_write(lcc_node_t *node, uint32_t addr, uint16_t count,
+                          const uint8_t *in) {
+    (void)node;
+    g_cfg_writes++;
+    memcpy(&g_cfg[addr], in, count);
+    return count;
+}
 static const lcc_memspace_handler_t g_global_spaces[] = {
-    { .space = 0xFD, .size = sizeof(g_cfg), .read = cfg_read },
+    { .space = 0xFD, .size = sizeof(g_cfg), .read = cfg_read,
+      .write = cfg_write },
+    { .space = 0xFC, .size = 4, .read_only = true, .read = cfg_read },
 };
+
+static int g_reboots;
+static void mock_reboot(void) { g_reboots++; }
+static int g_factory_resets;
+static void mock_factory_reset(lcc_node_t *node) {
+    (void)node;
+    g_factory_resets++;
+}
 
 static lcc_node_t g_node;
 
@@ -79,12 +98,25 @@ static void reset_all(void) {
     memset(g_last_req_data, 0, sizeof(g_last_req_data));
     g_defer_return = 0;
     g_complete_inline = false;
+    memcpy(g_cfg, g_cfg_init, sizeof(g_cfg));
+    g_cfg_writes = 0;
+    g_reboots = 0;
+    g_factory_resets = 0;
 
     memset(&g_node, 0, sizeof(g_node));
+    g_node.id = 0x050101012233ULL;
     g_node.alias = 0xABC;
     g_node.alias_state = LCC_A_CONFIRMED;
     lcc_memconfig_register_node_spaces(&g_node, g_node_spaces, 1);
-    lcc_memconfig_register_spaces(g_global_spaces, 1);
+    lcc_memconfig_register_spaces(g_global_spaces, 2);
+    lcc_memconfig_set_hooks(mock_reboot, mock_factory_reset);
+}
+
+/* lcc_memconfig_check, returning the error and storing the OK flags. */
+static uint8_t g_flags;
+static uint16_t check(const uint8_t *pkt, uint8_t len) {
+    g_flags = 0xEE;
+    return lcc_memconfig_check(&g_node, pkt, len, &g_flags);
 }
 
 /* [0x20][0x40][addr:4][space][count] */
@@ -116,32 +148,119 @@ static void assert_bytes(const dg_rec_t *r, const uint8_t *want, uint8_t n) {
 
 /* ---- tests -------------------------------------------------------------- */
 
-static void test_ack_flags(void) {
+static void test_check_ok_flags(void) {
     reset_all();
     uint8_t pkt[16];
     uint8_t one = 1;
 
     uint8_t len = mc_read(pkt, 0, 0xF8, 1);
-    assert(lcc_memconfig_ack_flags(&g_node, pkt, len) ==
+    assert(check(pkt, len) == 0);
+    assert(g_flags ==
            (LCC_DATAGRAM_OK_REPLY_PENDING | LCC_MEMCFG_DEFER_TIMEOUT_EXP));
     len = mc_write(pkt, 0, 0xF8, &one, 1);
-    assert(lcc_memconfig_ack_flags(&g_node, pkt, len) ==
+    assert(check(pkt, len) == 0);
+    assert(g_flags ==
            (LCC_DATAGRAM_OK_REPLY_PENDING | LCC_MEMCFG_DEFER_TIMEOUT_EXP));
 
     len = mc_read(pkt, 0, 0xFD, 1);              /* synchronous space */
-    assert(lcc_memconfig_ack_flags(&g_node, pkt, len) == 0);
+    assert(check(pkt, len) == 0 && g_flags == 0);
+    len = mc_write(pkt, 0, 0xFD, &one, 1);
+    assert(check(pkt, len) == 0 && g_flags == 0);
+    uint8_t low_bits[7] = { 0x20, 0x41, 0, 0, 0, 0, 4 };  /* 0xFD, no byte */
+    assert(check(low_bits, sizeof(low_bits)) == 0 && g_flags == 0);
 
     uint8_t info[3] = { 0x20, 0x84, 0xF8 };      /* not a read/write */
-    assert(lcc_memconfig_ack_flags(&g_node, info, sizeof(info)) == 0);
+    assert(check(info, sizeof(info)) == 0 && g_flags == 0);
+    uint8_t update[2] = { 0x20, 0xA8 };
+    assert(check(update, sizeof(update)) == 0 && g_flags == 0);
 
-    /* Malformed requests handle_read/handle_write drop: no promise. */
+    printf("  PASS: check accepts valid requests; Reply Pending only for "
+           "deferred ones\n");
+}
+
+static void test_check_rejects_unservable(void) {
+    reset_all();
+    uint8_t pkt[16];
+    uint8_t one = 1;
+
+    /* The case that used to time out: a read of a space we don't have. */
+    uint8_t len = mc_read(pkt, 0, 0xEF, 1);
+    assert(check(pkt, len) == LCC_ERR_SPACE_UNKNOWN);
+    assert(g_flags == 0);
+    len = mc_write(pkt, 0, 0xEF, &one, 1);
+    assert(check(pkt, len) == LCC_ERR_SPACE_UNKNOWN);
+    uint8_t all_mem[7] = { 0x20, 0x42, 0, 0, 0, 0, 1 };  /* 0xFE, unregistered */
+    assert(check(all_mem, sizeof(all_mem)) == LCC_ERR_SPACE_UNKNOWN);
+
+    len = mc_write(pkt, 0, 0xFC, &one, 1);       /* read-only space */
+    assert(check(pkt, len) == LCC_ERR_WRITE_READ_ONLY);
+    len = mc_write(pkt, sizeof(g_cfg), 0xFD, &one, 1);  /* past the end */
+    assert(check(pkt, len) == LCC_ERR_OUT_OF_BOUNDS);
+
+    /* Malformed. */
     len = mc_read(pkt, 0, 0xF8, 0);              /* zero count */
-    assert(lcc_memconfig_ack_flags(&g_node, pkt, len) == 0);
-    assert(lcc_memconfig_ack_flags(&g_node, pkt, 7) == 0);  /* no count */
+    assert(check(pkt, len) == LCC_ERR_INVALID_ARGUMENTS);
+    assert(check(pkt, 7) == LCC_ERR_INVALID_ARGUMENTS);  /* no count */
+    assert(check(pkt, 5) == LCC_ERR_INVALID_ARGUMENTS);  /* short address */
     len = mc_write(pkt, 0, 0xF8, NULL, 0);       /* no data */
-    assert(lcc_memconfig_ack_flags(&g_node, pkt, len) == 0);
+    assert(check(pkt, len) == LCC_ERR_INVALID_ARGUMENTS);
+    uint8_t bare[1] = { 0x20 };
+    assert(check(bare, sizeof(bare)) == LCC_ERR_INVALID_ARGUMENTS);
+    uint8_t short_info[2] = { 0x20, 0x84 };
+    assert(check(short_info, sizeof(short_info)) == LCC_ERR_INVALID_ARGUMENTS);
 
-    printf("  PASS: Reply Pending only for deferred reads/writes\n");
+    /* Sub-commands we don't implement, and replies (we're never a client). */
+    uint8_t options[2] = { 0x20, 0x80 };
+    assert(check(options, sizeof(options)) == LCC_ERR_UNIMPLEMENTED_SUBCMD);
+    uint8_t reply[8] = { 0x20, 0x50, 0, 0, 0, 0, 0xFD, 0 };
+    assert(check(reply, sizeof(reply)) == LCC_ERR_UNIMPLEMENTED_SUBCMD);
+    uint8_t reserved_read[8] = { 0x20, 0x44, 0, 0, 0, 0, 0xFD, 1 };
+    assert(check(reserved_read, sizeof(reserved_read))
+           == LCC_ERR_UNIMPLEMENTED_SUBCMD);
+
+    assert(g_sent_count == 0);
+    printf("  PASS: check rejects unknown/read-only spaces, bad requests, "
+           "unknown commands\n");
+}
+
+static void test_reboot_and_factory_reset(void) {
+    reset_all();
+    uint8_t reboot[2] = { 0x20, 0xA9 };
+    assert(check(reboot, sizeof(reboot)) == 0);
+    lcc_memconfig_handle(&g_node, 0x123, reboot, sizeof(reboot));
+    assert(g_reboots == 1);
+
+    uint8_t reset[8] = { 0x20, 0xAA, 0x05, 0x01, 0x01, 0x01, 0x22, 0x33 };
+    assert(check(reset, sizeof(reset)) == 0);
+    lcc_memconfig_handle(&g_node, 0x123, reset, sizeof(reset));
+    assert(g_factory_resets == 1);
+
+    reset[7] = 0x34;                             /* someone else's node ID */
+    assert(check(reset, sizeof(reset)) == LCC_ERR_INVALID_ARGUMENTS);
+    lcc_memconfig_handle(&g_node, 0x123, reset, sizeof(reset));
+    assert(g_factory_resets == 1);
+    assert(check(reset, 7) == LCC_ERR_INVALID_ARGUMENTS);
+
+    lcc_memconfig_set_hooks(NULL, NULL);
+    reset[7] = 0x33;
+    assert(check(reboot, sizeof(reboot)) == LCC_ERR_UNIMPLEMENTED_SUBCMD);
+    assert(check(reset, sizeof(reset)) == LCC_ERR_UNIMPLEMENTED_SUBCMD);
+
+    assert(g_sent_count == 0);                   /* OK comes from lcc_datagram */
+    printf("  PASS: reboot/factory reset need hooks and a matching node ID\n");
+}
+
+static void test_sync_write(void) {
+    reset_all();
+    uint8_t pkt[16];
+    uint8_t vals[2] = { 0xA1, 0xA2 };
+    uint8_t len = mc_write(pkt, 2, 0xFD, vals, 2);
+    assert(check(pkt, len) == 0);
+    lcc_memconfig_handle(&g_node, 0x123, pkt, len);
+    assert(g_cfg_writes == 1);
+    assert(g_cfg[2] == 0xA1 && g_cfg[3] == 0xA2);
+    assert(g_sent_count == 0);                   /* plain OK completes it */
+    printf("  PASS: synchronous write lands with no reply datagram\n");
 }
 
 static void test_deferred_read_success(void) {
@@ -325,7 +444,10 @@ static void test_sync_space_unchanged(void) {
 
 int main(void) {
     printf("test_lcc_memconfig:\n");
-    test_ack_flags();
+    test_check_ok_flags();
+    test_check_rejects_unservable();
+    test_reboot_and_factory_reset();
+    test_sync_write();
     test_deferred_read_success();
     test_deferred_read_failure();
     test_deferred_write_success();
