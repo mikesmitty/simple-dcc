@@ -3,6 +3,8 @@
 #include "dcc/packet.h"
 #include "servicemode/svc_ack.h"
 
+#include <stdio.h>
+
 #include "pico/stdlib.h"
 #include "hardware/pio.h"
 #include "FreeRTOS.h"
@@ -16,6 +18,9 @@
  * the 22-bit preamble at a 500 kHz SM clock one lasts ~8 ms, so these
  * waits double as reset-packet counts. */
 #define POWER_ON_SETTLE_MS  200   /* power-on cycle: >= 20 packets first      */
+#define IDLE_SETTLE_MAX_MS  1000  /* longest wait for idle current to fall to
+                                   * the programming limit                    */
+#define IDLE_RECHECK_STEP_MS 50
 #define BASELINE_MS         20    /* idle current, sampled before each burst  */
 #define CMD_REPEATS         15    /* burst length (OpenMRN); S-9.2.3 min is 5 */
 #define ACK_TAIL_MS         20    /* keep listening after the last packet     */
@@ -86,8 +91,9 @@ svc_result_t servicemode_submit(svc_op_t op, uint16_t cv, uint8_t value,
 
 /* ---- ACK detector ----------------------------------------------------- */
 
-/* Idle current while reset packets go out, before each instruction. */
-static void sample_baseline(svc_ack_t *d)
+/* Idle current while reset packets go out, before each instruction.
+ * Returns its mean, in raw units. */
+static uint16_t sample_baseline(svc_ack_t *d)
 {
     svc_ack_reset(d);
     uint32_t start = time_us_32();
@@ -95,7 +101,40 @@ static void sample_baseline(svc_ack_t *d)
         svc_ack_baseline(d, motor_read_current_raw(g_motor));
         busy_wait_us_32(SAMPLE_US);
     }
-    svc_ack_arm(d, motor_ma_to_raw(ACK_THRESHOLD_MA));
+    return svc_ack_arm(d, motor_ma_to_raw(ACK_THRESHOLD_MA));
+}
+
+/* ---- idle current guard ------------------------------------------------
+ * During an operation the track trips only at the main limit (see
+ * track_power), which lets a decoder with a wiring fault draw that for the
+ * whole read. A decoder idles at tens of mA, so one still over the
+ * programming track's own limit with no ACK under way has a fault (on the
+ * bench: a motor running on its own at ~570 mA). Treat it as a short. */
+static bool idle_over_limit(uint16_t idle)
+{
+    if (idle <= g_motor->current_limit)
+        return false;
+    printf("TRACK %c IDLE %umA over the %umA programming limit\n",
+           g_motor->track_id, motor_raw_to_ma(idle),
+           motor_raw_to_ma(g_motor->current_limit));
+    return true;
+}
+
+/* After power-on, give the idle current up to IDLE_SETTLE_MAX_MS to fall
+ * to the programming limit, for a decoder still charging its capacitors. */
+static bool idle_settles(void)
+{
+    TickType_t start = xTaskGetTickCount();
+    for (;;) {
+        svc_ack_t d;
+        uint16_t idle = sample_baseline(&d);
+        if (idle <= g_motor->current_limit)
+            return true;
+        if (!motor_is_on(g_motor) ||
+            xTaskGetTickCount() - start >= pdMS_TO_TICKS(IDLE_SETTLE_MAX_MS))
+            return !idle_over_limit(idle);
+        vTaskDelay(pdMS_TO_TICKS(IDLE_RECHECK_STEP_MS));
+    }
 }
 
 /* ---- one instruction -------------------------------------------------- */
@@ -126,7 +165,8 @@ static svc_result_t hw_send(void *ctx, dcc_packet_t *pkt, bool *ack)
         return SVC_SHORT;
 
     svc_ack_t det;
-    sample_baseline(&det);
+    if (idle_over_limit(sample_baseline(&det)))
+        return SVC_SHORT;
     encoded_packet_t enc = packet_encode(pkt);
 
     /* Burst: keep the FIFO topped up so the copies go out back to back —
@@ -207,9 +247,13 @@ void task_servicemode(void *params)
         vTaskDelay(pdMS_TO_TICKS(POWER_ON_SETTLE_MS));
 
         uint8_t value = req.value;
-        svc_result_t res = (req.op == SVC_OP_READ)
-                         ? svc_cv_read(&io, req.cv, &value)
-                         : svc_cv_write(&io, req.cv, req.value);
+        svc_result_t res;
+        if (!idle_settles())
+            res = SVC_SHORT;
+        else if (req.op == SVC_OP_READ)
+            res = svc_cv_read(&io, req.cv, &value);
+        else
+            res = svc_cv_write(&io, req.cv, req.value);
         if (req.op == SVC_OP_WRITE && res != SVC_SHORT)
             vTaskDelay(pdMS_TO_TICKS(WRITE_HOLD_MS));
         track_power(false);
