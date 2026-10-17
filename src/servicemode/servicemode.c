@@ -1,6 +1,5 @@
 #include "servicemode/servicemode.h"
 
-#include "board_config.h"
 #include "dcc/packet.h"
 
 #include "pico/stdlib.h"
@@ -48,14 +47,6 @@ static motor_t      *g_motor;
 static PIO           g_pio;
 static uint          g_sm;
 static QueueHandle_t g_queue;
-
-/* mA → raw ADC units for the 8874's current-sense stage. Kept private
- * here rather than exported from motor.c because this is the only other
- * caller that needs it and we want the calibration to stay in one place. */
-static uint16_t ma_to_adc(uint16_t ma)
-{
-    return (uint16_t)((float)ma * SENSE_FACTOR_8874 * 4096.0f / 3300.0f);
-}
 
 bool servicemode_init(motor_t *prog_motor)
 {
@@ -115,7 +106,7 @@ static uint16_t sample_baseline(void)
 
 static void ack_init(ack_detector_t *d, uint16_t baseline)
 {
-    d->threshold = (uint16_t)(baseline + ma_to_adc(ACK_THRESHOLD_MA));
+    d->threshold = (uint16_t)(baseline + motor_ma_to_raw(ACK_THRESHOLD_MA));
     d->filt      = (int32_t)baseline << 4;
     d->above     = false;
 }

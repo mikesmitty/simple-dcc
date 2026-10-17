@@ -10,7 +10,6 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-#include "board_config.h"
 #include "util/dbg.h"
 
 #define DISPLAY_W         128
@@ -243,7 +242,7 @@ static void fb_draw_string(uint8_t x, uint8_t row, const char *s) {
 static void fmt_track_line(char *out, size_t n, const char *label,
                            motor_t *m) {
     if (motor_is_on(m)) {
-        uint16_t ma = (uint16_t)((float)m->last_reading * SENSE_FACTOR_8874);
+        uint16_t ma = motor_raw_to_ma(m->last_reading);
         snprintf(out, n, "%s: ON %4umA", label, ma);
     } else {
         snprintf(out, n, "%s: OFF", label);

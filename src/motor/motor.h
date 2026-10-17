@@ -48,6 +48,11 @@ bool motor_is_on(motor_t *m);
 // Raw current-sense ADC reading for this channel. Safe from any task.
 uint16_t motor_read_current_raw(motor_t *m);
 
+// Current-sense calibration (SENSE_FACTOR_8874) in one place: mA <-> raw
+// ADC units.
+uint16_t motor_ma_to_raw(uint16_t ma);
+uint16_t motor_raw_to_ma(uint16_t raw);
+
 // Track monitor task data: array of motor pointers
 typedef struct {
     motor_t **motors;

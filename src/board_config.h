@@ -20,7 +20,10 @@
 #define ADC_CHANNEL_B       2
 
 // ---- Motor shield current sensing ----
-#define SENSE_FACTOR_8874   1.27f   // mA per ADC unit
+// mA per raw unit of the 12-bit ADC: mA = raw * SENSE_FACTOR_8874. From the
+// EX-MotorShield8874 README (1.27 at 5 V IOREF, 1.24 at 3.3 V); DCC-EX uses
+// 1.27 for 3.3 V boards. Convert with motor_ma_to_raw / motor_raw_to_ma.
+#define SENSE_FACTOR_8874   1.27f
 #define MAX_CURRENT_MAIN_MA 2000
 #define MAX_CURRENT_PROG_MA 250
 
