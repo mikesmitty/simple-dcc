@@ -568,6 +568,30 @@ static uint8_t mc_write(uint8_t *buf, uint32_t addr, const uint8_t *data,
     return (uint8_t)(7 + data_len);
 }
 
+/* Write a CV-space address on `n` and check the Write Reply: OK when `err`
+ * is 0, else Failed carrying `err`. */
+static void assert_write_reply(lcc_node_t *n, uint32_t addr,
+                               const uint8_t *data, uint8_t data_len,
+                               uint16_t err) {
+    uint8_t pkt[24];
+    uint8_t len = mc_write(pkt, addr, data, data_len);
+    last_datagram.calls = 0;
+    lcc_memconfig_handle(n, 0x123, pkt, len);
+
+    assert(last_datagram.calls == 1);
+    assert(last_datagram.data[1] == (err ? 0x18 : 0x10));
+    assert(last_datagram.data[2] == (uint8_t)(addr >> 24));
+    assert(last_datagram.data[5] == (uint8_t)addr);
+    assert(last_datagram.data[6] == 0xF8);
+    if (err) {
+        assert(last_datagram.len == 9);
+        assert(last_datagram.data[7] == (uint8_t)(err >> 8));
+        assert(last_datagram.data[8] == (uint8_t)err);
+    } else {
+        assert(last_datagram.len == 7);
+    }
+}
+
 static void test_cv_space_write_triggers_pom(void) {
     reset_all();
     lcc_node_t n; lcc_train_state_t t;
@@ -619,20 +643,22 @@ static void test_cv_space_long_address(void) {
     printf("  PASS: CV space honours long-address flag\n");
 }
 
-static void test_cv_space_value_before_index_is_noop(void) {
+static void test_cv_space_value_before_index_fails(void) {
     reset_all();
     lcc_node_t n; lcc_train_state_t t;
     init_node_with_train(&n, &t, 42, false, 0xABC);
     lcc_traction_register_cv_space(&n);
 
-    /* Write CV_VALUE without latching CV_INDEX first — drop silently. */
-    uint8_t pkt[16];
+    /* CV_VALUE without a CV latched in CV_INDEX first: nothing to write. */
     uint8_t val = 0x55;
-    uint8_t len = mc_write(pkt, 0x7F000004u, &val, 1);
-    lcc_memconfig_handle(&n, 0x123, pkt, len);
-
+    assert_write_reply(&n, 0x7F000004u, &val, 1, LCC_ERR_INVALID_ARGUMENTS);
     assert(last_pom.calls == 0);
-    printf("  PASS: CV space value-before-index is no-op\n");
+
+    /* Nor with a CV that POM can't address. */
+    t.pom_cv_index = 1025;
+    assert_write_reply(&n, 0x7F000004u, &val, 1, LCC_ERR_INVALID_ARGUMENTS);
+    assert(last_pom.calls == 0);
+    printf("  PASS: CV space value write needs a valid latched CV\n");
 }
 
 static void test_cv_space_per_node_isolation(void) {
@@ -702,6 +728,9 @@ static void test_cv_space_direct_write_poms(void) {
     assert(last_pom.cv == 29);
     assert(last_pom.value == 0x06);
     assert(t.pom_cv_index == 0);         /* direct path leaves the latch alone */
+    const uint8_t ok[] = { 0x20, 0x10, 0, 0, 0, 28, 0xF8 };
+    assert(last_datagram.len == sizeof(ok));
+    assert(memcmp(last_datagram.data, ok, sizeof(ok)) == 0);
 
     printf("  PASS: CV space direct-address write triggers POM\n");
 }
@@ -730,19 +759,40 @@ static void test_cv_space_direct_write_long_address(void) {
     printf("  PASS: CV space direct-address write honors long address\n");
 }
 
-static void test_cv_space_direct_write_past_cv_range_ignored(void) {
+static void test_cv_space_unwritable_addresses_fail(void) {
     reset_all();
     lcc_node_t n; lcc_train_state_t t;
     init_node_with_train(&n, &t, 42, false, 0xABC);
     lcc_traction_register_cv_space(&n);
 
-    uint8_t pkt[16];
     uint8_t val = 0x55;
-    uint8_t len = mc_write(pkt, 1024, &val, 1); /* would be CV 1025 */
-    lcc_memconfig_handle(&n, 0x123, pkt, len);
-
+    assert_write_reply(&n, 1024, &val, 1, LCC_ERR_OUT_OF_BOUNDS); /* CV 1025 */
+    assert_write_reply(&n, 0x7EFFFFFFu, &val, 1, LCC_ERR_OUT_OF_BOUNDS);
+    assert_write_reply(&n, 0x7F000006u, &val, 1, LCC_ERR_WRITE_READ_ONLY);
     assert(last_pom.calls == 0);
-    printf("  PASS: CV space ignores direct writes past CV 1024\n");
+
+    /* VERIFY_VALUE is still accepted (and dropped) until Phase 3. */
+    assert_write_reply(&n, 0x7F000005u, &val, 1, 0);
+
+    /* A run that crosses CV 1024 writes CV 1024, then fails. */
+    uint8_t two[2] = { 0x11, 0x22 };
+    assert_write_reply(&n, 1023, two, 2, LCC_ERR_OUT_OF_BOUNDS);
+    assert(last_pom.calls == 1 && last_pom.cv == 1024 && last_pom.value == 0x11);
+    printf("  PASS: CV space writes it can't apply fail with an error\n");
+}
+
+static void test_cv_space_multi_byte_direct_write(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 42, false, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    /* Each byte is the next CV, as on the programming track. */
+    uint8_t vals[3] = { 0x03, 0x04, 0x05 };
+    assert_write_reply(&n, 0, vals, 3, 0);       /* CVs 1..3 */
+    assert(last_pom.calls == 3);
+    assert(last_pom.cv == 3 && last_pom.value == 0x05);
+    printf("  PASS: CV space multi-byte direct write POMs each CV\n");
 }
 
 static void assert_cv_read_fails(lcc_node_t *n, uint32_t addr, uint16_t err) {
@@ -835,12 +885,13 @@ int main(void) {
     test_hooks_null_detach();
     test_cv_space_write_triggers_pom();
     test_cv_space_long_address();
-    test_cv_space_value_before_index_is_noop();
+    test_cv_space_value_before_index_fails();
     test_cv_space_per_node_isolation();
     test_cv_space_get_space_info();
     test_cv_space_direct_write_poms();
     test_cv_space_direct_write_long_address();
-    test_cv_space_direct_write_past_cv_range_ignored();
+    test_cv_space_unwritable_addresses_fail();
+    test_cv_space_multi_byte_direct_write();
     test_cv_space_reads_fail_without_railcom();
     printf("All LCC traction tests passed.\n");
     return 0;

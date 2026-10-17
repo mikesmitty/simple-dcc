@@ -87,7 +87,8 @@ static uint16_t cv_space_read(lcc_node_t *node, uint32_t addr,
 }
 
 static uint16_t cv_space_write(lcc_node_t *node, uint32_t addr,
-                               uint16_t count, const uint8_t *in)
+                               uint16_t count, const uint8_t *in,
+                               uint16_t *error)
 {
     if (!node->train) return 0;
 
@@ -122,24 +123,32 @@ static uint16_t cv_space_write(lcc_node_t *node, uint32_t addr,
         return count;
     }
 
-    /* CV_VALUE: one-byte write triggers the POM packet via the hook. */
+    /* CV_VALUE: one-byte write triggers the POM packet via the hook, for
+     * the CV latched in CV_INDEX — which must be one POM can reach. */
     if (addr == CV_OFFSET_VALUE && count >= 1) {
         uint16_t cv = node->train->pom_cv_index;
-        if (cv != 0 && g_hooks.pom_write_byte) {
+        if (cv == 0 || cv > CV_DIRECT_COUNT) {
+            *error = LCC_ERR_INVALID_ARGUMENTS;
+            return 0;
+        }
+        if (g_hooks.pom_write_byte)
             g_hooks.pom_write_byte(node->train->dcc_address,
                                    node->train->is_long_address,
                                    cv, in[0]);
-        }
         return 1;
     }
 
-    /* VERIFY_VALUE / VERIFY_RESULT: Phase 3. Accept + drop so JMRI's
-     * writes don't error out. */
+    /* VERIFY_VALUE: Phase 3. Accept + drop so JMRI's writes don't error
+     * out. VERIFY_RESULT is the decoder's answer, so not writable. */
     if (addr == CV_OFFSET_VERIFY_VALUE && count >= 1)
         return 1;
+    if (addr == CV_OFFSET_VERIFY_RESULT) {
+        *error = LCC_ERR_WRITE_READ_ONLY;
+        return 0;
+    }
 
-    /* Unmapped: dropped, but the requester sees success. See the TODO at
-     * the end of handle_write in lcc_memconfig.c. */
+    /* The gap between the direct CVs and the indirect registers. */
+    *error = LCC_ERR_OUT_OF_BOUNDS;
     return 0;
 }
 

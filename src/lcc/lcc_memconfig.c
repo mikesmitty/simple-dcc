@@ -294,9 +294,11 @@ uint16_t lcc_memconfig_check(const lcc_node_t *node, const uint8_t *payload,
         uint16_t error = parse_rw(node, payload, len, &rq);
         if (error)
             return error;
+        /* Every read and write is answered with a reply datagram, as in
+         * OpenMRN; for writes it is what lets a failure be reported. */
+        *ok_flags = LCC_DATAGRAM_OK_REPLY_PENDING;
         if (rq.h->defer)
-            *ok_flags = LCC_DATAGRAM_OK_REPLY_PENDING
-                      | LCC_MEMCFG_DEFER_TIMEOUT_EXP;
+            *ok_flags |= LCC_MEMCFG_DEFER_TIMEOUT_EXP;
         return 0;
     }
 
@@ -411,25 +413,29 @@ static void handle_write(lcc_node_t *node, uint16_t src_alias,
         return;
     }
 
+    /* Bytes past the end are not written, and the reply says so. */
+    uint8_t in_bounds = count;
     if ((uint32_t)addr + count > h->size)
-        count = (uint8_t)(h->size - addr);
+        in_bounds = (uint8_t)(h->size - addr);
 
-    (void)src_alias;
-    (void)h->write(node, addr, count, write_data);
+    /* Hand the handler whatever it hasn't taken yet (the train CV space
+     * takes one CV per call), as OpenMRN's MemoryConfigHandler does. */
+    uint16_t error = 0;
+    uint8_t  done  = 0;
+    while (done < in_bounds && !error) {
+        uint8_t  left = (uint8_t)(in_bounds - done);
+        uint16_t n = h->write(node, addr + done, left, write_data + done,
+                              &error);
+        if (n > left)
+            n = left;
+        if (n == 0 && !error)
+            error = LCC_ERR_PERMANENT;  /* no progress and no reason why */
+        done = (uint8_t)(done + n);
+    }
+    if (!error && in_bounds < count)
+        error = LCC_ERR_OUT_OF_BOUNDS;
 
-    /* TODO: a write the handler can't apply is dropped, yet the requester
-     * was told it succeeded: a plain Datagram OK (no Reply Pending)
-     * completes a write. E.g. a train node's 0xF8 at address 1024
-     * ("CV 1025"), the gap below 0x7F000000, or VERIFY_RESULT, for which
-     * cv_space_write returns 0. lcc_memconfig_check rejects only what it
-     * can see up front (unknown/read-only space, past the end).
-     *
-     * Fix the way OpenMRN's MemoryConfigHandler does: ACK every write
-     * with Reply Pending, then send Write Reply OK or Write Reply Failed
-     * + error (send_reply already builds both), and give
-     * lcc_memspace_write_fn an `error` out-param like the read side.
-     * JMRI handles that form. It costs one more datagram per write, so
-     * re-check CDI save speed in JMRI afterwards. */
+    send_reply(node, src_alias, buf[1], rq.space, addr, error, NULL, 0);
 }
 
 /* ---- UPDATE_COMPLETE / REBOOT / FACTORY_RESET ------------------------- */

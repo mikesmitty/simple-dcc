@@ -34,10 +34,13 @@ typedef uint16_t (*lcc_memspace_read_fn)(lcc_node_t *node,
                                          uint8_t *out, uint16_t *error);
 
 /* Write `count` bytes from `in` to `space` at `addr`. Return the number
- * of bytes accepted. Read-only spaces should set this to NULL. */
+ * of bytes accepted; if that's fewer than `count`, the rest is offered
+ * again at the following address. If the address can't be written, set
+ * `*error` (it starts at 0): the requester gets a Write Reply Failed
+ * carrying it. Read-only spaces should set this to NULL. */
 typedef uint16_t (*lcc_memspace_write_fn)(lcc_node_t *node,
                                           uint32_t addr, uint16_t count,
-                                          const uint8_t *in);
+                                          const uint8_t *in, uint16_t *error);
 
 /* Called after a successful Indicate Configuration Update Complete
  * (0xA8). Backing store may commit pending changes (e.g. flash flush). */
@@ -105,11 +108,12 @@ void lcc_memconfig_set_hooks(lcc_memconfig_reboot_fn reboot,
                              lcc_memconfig_factory_reset_fn factory_reset);
 
 /* Vet a memconfig datagram before lcc_datagram acknowledges it. Returns 0
- * to accept: send Datagram OK carrying *ok_flags (Reply Pending +
- * LCC_MEMCFG_DEFER_TIMEOUT_EXP for reads/writes on a deferred space, else
- * 0), then call lcc_memconfig_handle. Any other value is the error code to
- * send in Datagram Rejected (unknown space, read-only space, malformed or
- * unimplemented command), and the datagram must not be handled. */
+ * to accept: send Datagram OK carrying *ok_flags (Reply Pending for every
+ * read and write, plus LCC_MEMCFG_DEFER_TIMEOUT_EXP on a deferred space;
+ * 0 for other commands), then call lcc_memconfig_handle. Any other value
+ * is the error code to send in Datagram Rejected (unknown space, read-only
+ * space, malformed or unimplemented command), and the datagram must not be
+ * handled. */
 uint16_t lcc_memconfig_check(const lcc_node_t *node, const uint8_t *payload,
                              uint8_t len, uint8_t *ok_flags);
 

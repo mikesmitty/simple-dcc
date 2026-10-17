@@ -201,8 +201,8 @@ static bool config_range_touches(uint32_t addr, uint16_t count,
 }
 
 static uint16_t config_write(lcc_node_t *node, uint32_t addr, uint16_t count,
-                             const uint8_t *in) {
-    (void)node;
+                             const uint8_t *in, uint16_t *error) {
+    (void)node; (void)error;
     if (addr >= CONFIG_MEM_SIZE) return 0;
     if ((uint32_t)addr + count > CONFIG_MEM_SIZE)
         count = (uint16_t)(CONFIG_MEM_SIZE - addr);
@@ -261,8 +261,8 @@ static uint16_t acdi_user_read(lcc_node_t *node, uint32_t addr, uint16_t count,
 }
 
 static uint16_t acdi_user_write(lcc_node_t *node, uint32_t addr, uint16_t count,
-                                const uint8_t *in) {
-    (void)node;
+                                const uint8_t *in, uint16_t *error) {
+    (void)node; (void)error;
     if (addr >= ACDI_USER_SIZE) return 0;
     if ((uint32_t)addr + count > ACDI_USER_SIZE)
         count = (uint16_t)(ACDI_USER_SIZE - addr);

@@ -33,8 +33,8 @@ static uint16_t cfg_read(lcc_node_t *node, uint32_t addr, uint16_t count,
     return count;
 }
 static uint16_t cfg_write(lcc_node_t *node, uint32_t addr, uint16_t count,
-                          const uint8_t *in) {
-    (void)node;
+                          const uint8_t *in, uint16_t *error) {
+    (void)node; (void)error;
     memcpy(&g_cfg[addr], in, count);
     return count;
 }
@@ -133,7 +133,7 @@ static void test_known_space_read_is_acked_then_answered(void) {
     rx(LCC_FRAME_DATAGRAM_ONE, PEER_ALIAS, read, sizeof(read));
 
     assert(g_tx_count == 2);
-    assert_ok(0, PEER_ALIAS, -1);
+    assert_ok(0, PEER_ALIAS, LCC_DATAGRAM_OK_REPLY_PENDING);
     assert(tx_is_datagram(1));
     const uint8_t want[7] = { 0x20, 0x51, 0, 0, 0, 2, 0x77 };
     assert(g_tx[1].dlc == sizeof(want));
@@ -202,11 +202,17 @@ static void test_multi_frame_write(void) {
     assert(g_tx_count == 0);
     rx(LCC_FRAME_DATAGRAM_FINAL, PEER_ALIAS, final, sizeof(final));
 
-    assert(g_tx_count == 1);
-    assert_ok(0, PEER_ALIAS, -1);
+    assert(g_tx_count == 2);
+    assert_ok(0, PEER_ALIAS, LCC_DATAGRAM_OK_REPLY_PENDING);
     const uint8_t want[4] = { 0xA1, 0xA2, 0xA3, 0xA4 };
     assert(memcmp(g_cfg, want, sizeof(want)) == 0);
-    printf("  PASS: multi-frame write is reassembled and applied\n");
+    const uint8_t reply[6] = { 0x20, 0x11, 0, 0, 0, 0 };  /* Write Reply OK */
+    assert(tx_is_datagram(1));
+    assert(lcc_get_datagram_dst(g_tx[1].id) == PEER_ALIAS);
+    assert(g_tx[1].dlc == sizeof(reply));
+    assert(memcmp(g_tx[1].data, reply, sizeof(reply)) == 0);
+    printf("  PASS: multi-frame write is reassembled, applied, and "
+           "answered\n");
 }
 
 static void test_interleaved_sender_is_out_of_order(void) {
@@ -221,8 +227,8 @@ static void test_interleaved_sender_is_out_of_order(void) {
 
     /* The first sender's datagram is untouched. */
     rx(LCC_FRAME_DATAGRAM_FINAL, PEER_ALIAS, final, sizeof(final));
-    assert(g_tx_count == 2);
-    assert_ok(1, PEER_ALIAS, -1);
+    assert(g_tx_count == 3);                     /* OK + Write Reply */
+    assert_ok(1, PEER_ALIAS, LCC_DATAGRAM_OK_REPLY_PENDING);
     assert(g_cfg[0] == 0xB1 && g_cfg[1] == 0xB2 && g_cfg[2] == 0xB3);
     printf("  PASS: another sender's stray frame doesn't disturb a datagram\n");
 }

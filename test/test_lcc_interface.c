@@ -388,32 +388,35 @@ static void test_dynamic_updates(void) {
     lcc_interface_load_config();
     lcc_interface_init(&mock_dcc_engine, &mock_track_main, NULL);
 
+    uint16_t err = 0;
+
     /* RailCom off → wavegen reinit to NO_CUTOUT. */
     wavegen_reinit_count = 0;
     uint8_t off = 0;
-    config_write(&g_cs_node, CONFIG_OFFSET_RAILCOM, 1, &off);
+    config_write(&g_cs_node, CONFIG_OFFSET_RAILCOM, 1, &off, &err);
     assert(wavegen_reinit_count == 1);
     assert(last_wavegen_mode == WAVEGEN_NO_CUTOUT);
 
     /* RailCom on → wavegen reinit to NORMAL. */
     uint8_t on = 1;
-    config_write(&g_cs_node, CONFIG_OFFSET_RAILCOM, 1, &on);
+    config_write(&g_cs_node, CONFIG_OFFSET_RAILCOM, 1, &on, &err);
     assert(wavegen_reinit_count == 2);
     assert(last_wavegen_mode == WAVEGEN_NORMAL);
 
     /* Main limit: 2-byte write updates motor_a. */
     motor_a_limit_calls = 0;
     uint8_t limit[2] = { (uint8_t)((1500 >> 8) & 0xFF), (uint8_t)(1500 & 0xFF) };
-    config_write(&g_cs_node, CONFIG_OFFSET_MAIN_LIMIT, 2, limit);
+    config_write(&g_cs_node, CONFIG_OFFSET_MAIN_LIMIT, 2, limit, &err);
     assert(motor_a_limit_calls == 1);
     assert(motor_a_last_limit == 1500);
 
     /* Prog limit updates motor_b. */
     motor_b_limit_calls = 0;
     uint8_t plimit[2] = { 0x00, 0xFA };  /* 250 mA */
-    config_write(&g_cs_node, CONFIG_OFFSET_PROG_LIMIT, 2, plimit);
+    config_write(&g_cs_node, CONFIG_OFFSET_PROG_LIMIT, 2, plimit, &err);
     assert(motor_b_limit_calls == 1);
     assert(motor_b_last_limit == 250);
+    assert(err == 0);
 
     /* Pin getters read straight from cs_config_mem. */
     uint8_t sig, pwr, brk, flt, adc;

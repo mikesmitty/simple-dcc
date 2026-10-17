@@ -71,11 +71,20 @@ static uint16_t cfg_read(lcc_node_t *node, uint32_t addr, uint16_t count,
     memcpy(out, &g_cfg[addr], count);
     return count;
 }
-static int g_cfg_writes;
+static int      g_cfg_writes;
+static uint16_t g_cfg_write_max;    /* nonzero: take at most this many */
+static uint32_t g_cfg_write_fail_at = UINT32_MAX;  /* fail at this addr */
+static uint16_t g_cfg_write_error;  /* ...with this (0: no progress) */
 static uint16_t cfg_write(lcc_node_t *node, uint32_t addr, uint16_t count,
-                          const uint8_t *in) {
+                          const uint8_t *in, uint16_t *error) {
     (void)node;
     g_cfg_writes++;
+    if (addr == g_cfg_write_fail_at) {
+        *error = g_cfg_write_error;
+        return 0;
+    }
+    if (g_cfg_write_max && count > g_cfg_write_max)
+        count = g_cfg_write_max;
     memcpy(&g_cfg[addr], in, count);
     return count;
 }
@@ -105,6 +114,9 @@ static void reset_all(void) {
     g_complete_inline = false;
     memcpy(g_cfg, g_cfg_init, sizeof(g_cfg));
     g_cfg_writes = 0;
+    g_cfg_write_max = 0;
+    g_cfg_write_fail_at = UINT32_MAX;
+    g_cfg_write_error = 0;
     g_cfg_read_error = 0;
     g_reboots = 0;
     g_factory_resets = 0;
@@ -168,20 +180,22 @@ static void test_check_ok_flags(void) {
     assert(g_flags ==
            (LCC_DATAGRAM_OK_REPLY_PENDING | LCC_MEMCFG_DEFER_TIMEOUT_EXP));
 
-    len = mc_read(pkt, 0, 0xFD, 1);              /* synchronous space */
-    assert(check(pkt, len) == 0 && g_flags == 0);
+    /* Synchronous space: Reply Pending, default timeout. */
+    len = mc_read(pkt, 0, 0xFD, 1);
+    assert(check(pkt, len) == 0 && g_flags == LCC_DATAGRAM_OK_REPLY_PENDING);
     len = mc_write(pkt, 0, 0xFD, &one, 1);
-    assert(check(pkt, len) == 0 && g_flags == 0);
+    assert(check(pkt, len) == 0 && g_flags == LCC_DATAGRAM_OK_REPLY_PENDING);
     uint8_t low_bits[7] = { 0x20, 0x41, 0, 0, 0, 0, 4 };  /* 0xFD, no byte */
-    assert(check(low_bits, sizeof(low_bits)) == 0 && g_flags == 0);
+    assert(check(low_bits, sizeof(low_bits)) == 0
+           && g_flags == LCC_DATAGRAM_OK_REPLY_PENDING);
 
     uint8_t info[3] = { 0x20, 0x84, 0xF8 };      /* not a read/write */
     assert(check(info, sizeof(info)) == 0 && g_flags == 0);
     uint8_t update[2] = { 0x20, 0xA8 };
     assert(check(update, sizeof(update)) == 0 && g_flags == 0);
 
-    printf("  PASS: check accepts valid requests; Reply Pending only for "
-           "deferred ones\n");
+    printf("  PASS: check accepts valid requests; Reply Pending on every "
+           "read/write, longer timeout when deferred\n");
 }
 
 static void test_check_rejects_unservable(void) {
@@ -265,8 +279,75 @@ static void test_sync_write(void) {
     lcc_memconfig_handle(&g_node, 0x123, pkt, len);
     assert(g_cfg_writes == 1);
     assert(g_cfg[2] == 0xA1 && g_cfg[3] == 0xA2);
-    assert(g_sent_count == 0);                   /* plain OK completes it */
-    printf("  PASS: synchronous write lands with no reply datagram\n");
+    const uint8_t want[] = { 0x20, 0x10, 0, 0, 0, 2, 0xFD };
+    assert(g_sent_count == 1);
+    assert_bytes(&g_sent[0], want, sizeof(want));
+
+    uint8_t low_bits[8] = { 0x20, 0x01, 0, 0, 0, 5, 0xB1, 0xB2 };  /* 0xFD */
+    lcc_memconfig_handle(&g_node, 0x123, low_bits, sizeof(low_bits));
+    const uint8_t want_low[] = { 0x20, 0x11, 0, 0, 0, 5 };
+    assert(g_sent_count == 2);
+    assert_bytes(&g_sent[1], want_low, sizeof(want_low));
+    assert(g_cfg[5] == 0xB1 && g_cfg[6] == 0xB2);
+    printf("  PASS: synchronous write lands and sends Write Reply OK\n");
+}
+
+static void test_sync_write_failures(void) {
+    reset_all();
+    uint8_t pkt[24];
+    uint8_t vals[4] = { 0xC1, 0xC2, 0xC3, 0xC4 };
+
+    /* Handler refuses the address: Write Reply Failed with its code. */
+    g_cfg_write_fail_at = 4;
+    g_cfg_write_error = LCC_ERR_WRITE_READ_ONLY;
+    uint8_t len = mc_write(pkt, 4, 0xFD, vals, 1);
+    lcc_memconfig_handle(&g_node, 0x123, pkt, len);
+    const uint8_t refused[] = { 0x20, 0x18, 0, 0, 0, 4, 0xFD, 0x10, 0x83 };
+    assert(g_sent_count == 1);
+    assert_bytes(&g_sent[0], refused, sizeof(refused));
+
+    /* Handler stalls with no reason: still a failure, not a hang. */
+    g_cfg_write_error = 0;
+    lcc_memconfig_handle(&g_node, 0x123, pkt, len);
+    const uint8_t stalled[] = { 0x20, 0x18, 0, 0, 0, 4, 0xFD, 0x10, 0x00 };
+    assert(g_sent_count == 2);
+    assert_bytes(&g_sent[1], stalled, sizeof(stalled));
+
+    /* Straddles the end: the in-bounds bytes land, the reply fails. */
+    reset_all();
+    len = mc_write(pkt, sizeof(g_cfg) - 2, 0xFD, vals, 4);
+    lcc_memconfig_handle(&g_node, 0x123, pkt, len);
+    assert(g_cfg[14] == 0xC1 && g_cfg[15] == 0xC2);
+    const uint8_t straddle[] = { 0x20, 0x18, 0, 0, 0, 14, 0xFD, 0x10, 0x82 };
+    assert(g_sent_count == 1);
+    assert_bytes(&g_sent[0], straddle, sizeof(straddle));
+    printf("  PASS: synchronous write failures send Write Reply Failed\n");
+}
+
+static void test_sync_write_offers_the_rest(void) {
+    reset_all();
+    g_cfg_write_max = 1;                         /* one byte per call */
+    uint8_t pkt[24];
+    uint8_t vals[3] = { 0xD1, 0xD2, 0xD3 };
+    uint8_t len = mc_write(pkt, 8, 0xFD, vals, 3);
+    lcc_memconfig_handle(&g_node, 0x123, pkt, len);
+    assert(g_cfg_writes == 3);
+    assert(g_cfg[8] == 0xD1 && g_cfg[9] == 0xD2 && g_cfg[10] == 0xD3);
+    const uint8_t want[] = { 0x20, 0x10, 0, 0, 0, 8, 0xFD };
+    assert(g_sent_count == 1);
+    assert_bytes(&g_sent[0], want, sizeof(want));
+
+    /* A failure partway reports it, after the bytes before it landed. */
+    reset_all();
+    g_cfg_write_max = 1;
+    g_cfg_write_fail_at = 9;
+    g_cfg_write_error = LCC_ERR_INVALID_ARGUMENTS;
+    lcc_memconfig_handle(&g_node, 0x123, pkt, len);
+    assert(g_cfg[8] == 0xD1 && g_cfg[9] == 0x00);
+    const uint8_t failed[] = { 0x20, 0x18, 0, 0, 0, 8, 0xFD, 0x10, 0x80 };
+    assert(g_sent_count == 1);
+    assert_bytes(&g_sent[0], failed, sizeof(failed));
+    printf("  PASS: a handler taking part of a write is offered the rest\n");
 }
 
 static void test_deferred_read_success(void) {
@@ -489,6 +570,8 @@ int main(void) {
     test_check_rejects_unservable();
     test_reboot_and_factory_reset();
     test_sync_write();
+    test_sync_write_failures();
+    test_sync_write_offers_the_rest();
     test_deferred_read_success();
     test_deferred_read_failure();
     test_deferred_write_success();
