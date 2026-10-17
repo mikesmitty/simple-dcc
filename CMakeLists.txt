@@ -109,6 +109,7 @@ add_executable(simple-dcc
     src/track/track.c
     src/servicemode/servicemode.c
     src/servicemode/svc_cv.c
+    src/servicemode/svc_ack.c
     src/util/nv_storage.c
     src/display/display.c
     src/mcp2515/mcp2515.c

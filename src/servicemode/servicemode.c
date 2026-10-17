@@ -1,6 +1,7 @@
 #include "servicemode/servicemode.h"
 
 #include "dcc/packet.h"
+#include "servicemode/svc_ack.h"
 
 #include "pico/stdlib.h"
 #include "hardware/pio.h"
@@ -25,15 +26,12 @@
                                    * decoder can finish storing it (DCC-EX) */
 #define IDLE_RECHECK_MS     1000
 
-/* ---- ACK detection ----------------------------------------------------
- * An S-9.2.3 ACK is >= 60 mA above idle for 6 ms +/- 1 ms. The threshold
- * sits a little under 60 mA so a just-compliant decoder still clears it
- * over noise (DCC-EX's default is the same), and the minimum width rejects
- * the short spikes a motor or sound amp throws. Both want checking on
- * real hardware. */
+/* ---- ACK detection (svc_ack.h has the rules) ---------------------------
+ * The smallest rise that counts sits a little under S-9.2.3's 60 mA so a
+ * just-compliant decoder still clears it (DCC-EX's default is the same).
+ * On the bench, N-scale ESU decoders ACK ~550-720 mA for ~6 ms. */
 #define ACK_THRESHOLD_MA    50
-#define ACK_MIN_US          2500
-#define SAMPLE_US           50
+#define SAMPLE_US           SVC_ACK_SAMPLE_US
 
 #define PIO_TX_FIFO_WORDS   8     /* TX FIFO is joined (8 deep) */
 
@@ -88,52 +86,16 @@ svc_result_t servicemode_submit(svc_op_t op, uint16_t cv, uint8_t value,
 
 /* ---- ACK detector ----------------------------------------------------- */
 
-typedef struct {
-    uint16_t threshold;
-    int32_t  filt;          /* low-passed reading, scaled x16 */
-    bool     above;
-    uint32_t above_since;   /* time_us_32() when filt crossed threshold */
-} ack_detector_t;
-
-static uint16_t sample_baseline(void)
+/* Idle current while reset packets go out, before each instruction. */
+static void sample_baseline(svc_ack_t *d)
 {
-    uint32_t sum = 0;
-    uint32_t n   = 0;
+    svc_ack_reset(d);
     uint32_t start = time_us_32();
     while (time_us_32() - start < BASELINE_MS * 1000u) {
-        sum += motor_read_current_raw(g_motor);
-        n++;
+        svc_ack_baseline(d, motor_read_current_raw(g_motor));
         busy_wait_us_32(SAMPLE_US);
     }
-    return n ? (uint16_t)(sum / n) : 0;
-}
-
-static void ack_init(ack_detector_t *d, uint16_t baseline)
-{
-    d->threshold = (uint16_t)(baseline + motor_ma_to_raw(ACK_THRESHOLD_MA));
-    d->filt      = (int32_t)baseline << 4;
-    d->above     = false;
-}
-
-/* Take one sample. True once the filtered current has stayed above the
- * threshold for ACK_MIN_US. The IIR (alpha 1/4, ~200 us at 50 us per
- * sample) smooths the dips at each DCC polarity change. */
-static bool ack_sample(ack_detector_t *d)
-{
-    int32_t raw = (int32_t)motor_read_current_raw(g_motor) << 4;
-    d->filt += (raw - d->filt) / 4;
-
-    uint32_t now = time_us_32();
-    if ((d->filt >> 4) <= d->threshold) {
-        d->above = false;
-        return false;
-    }
-    if (!d->above) {
-        d->above       = true;
-        d->above_since = now;
-        return false;
-    }
-    return (now - d->above_since) >= ACK_MIN_US;
+    svc_ack_arm(d, motor_ma_to_raw(ACK_THRESHOLD_MA));
 }
 
 /* ---- one instruction -------------------------------------------------- */
@@ -146,9 +108,10 @@ static bool track_tripped(void)
 }
 
 /* Listen (and watch for a short) for one sample period. */
-static svc_result_t listen(ack_detector_t *d, bool *ack)
+static svc_result_t listen(svc_ack_t *d, bool *ack)
 {
-    if (!*ack && ack_sample(d))
+    if (!*ack && svc_ack_sample(d, motor_read_current_raw(g_motor),
+                                time_us_32()))
         *ack = true;
     if (track_tripped())
         return SVC_SHORT;
@@ -162,8 +125,8 @@ static svc_result_t hw_send(void *ctx, dcc_packet_t *pkt, bool *ack)
     if (track_tripped())
         return SVC_SHORT;
 
-    ack_detector_t det;
-    ack_init(&det, sample_baseline());
+    svc_ack_t det;
+    sample_baseline(&det);
     encoded_packet_t enc = packet_encode(pkt);
 
     /* Burst: keep the FIFO topped up so the copies go out back to back —
@@ -189,8 +152,11 @@ static svc_result_t hw_send(void *ctx, dcc_packet_t *pkt, bool *ack)
         if (r != SVC_OK)
             return r;
     }
+    /* An ACK only counts once it has ended, so one still under way at
+     * the end of the tail gets to finish. */
     uint32_t tail_start = time_us_32();
-    while (time_us_32() - tail_start < ACK_TAIL_MS * 1000u) {
+    while (!*ack && (time_us_32() - tail_start < ACK_TAIL_MS * 1000u ||
+                     svc_ack_pending(&det, time_us_32()))) {
         svc_result_t r = listen(&det, ack);
         if (r != SVC_OK)
             return r;
