@@ -106,7 +106,8 @@ static bool motor_check_overcurrent(motor_t *m) {
     return m->last_reading > trip_limit(m);
 }
 
-static void motor_set_mode(motor_t *m, power_mode_t mode) {
+// Call with the critical section held.
+static void apply_mode(motor_t *m, power_mode_t mode) {
     if (m->state == mode) return;
 
     if (mode == POWER_MODE_ON || mode == POWER_MODE_ALERT) {
@@ -119,8 +120,28 @@ static void motor_set_mode(motor_t *m, power_mode_t mode) {
     m->state = mode;
 }
 
+// The track monitor steps the FSM while the LCC and Service Mode tasks
+// switch power, on either core. Each FSM step moves from the state it read
+// and only if that is still the state, checked and changed under one
+// critical section, so a power-off landing mid-step can't be undone by it.
+static bool motor_transition(motor_t *m, power_mode_t from, power_mode_t to) {
+    taskENTER_CRITICAL();
+    bool ok = m->state == from;
+    if (ok)
+        apply_mode(m, to);
+    taskEXIT_CRITICAL();
+    return ok;
+}
+
 void motor_set_power(motor_t *m, bool on) {
-    motor_set_mode(m, on ? POWER_MODE_ON : POWER_MODE_OFF);
+    taskENTER_CRITICAL();
+    if (!on)
+        apply_mode(m, POWER_MODE_OFF);
+    else if (m->state == POWER_MODE_OFF)
+        apply_mode(m, POWER_MODE_ON);
+    // Already on, or overloaded: the FSM's backoff decides when power
+    // comes back.
+    taskEXIT_CRITICAL();
 }
 
 bool motor_is_on(motor_t *m) {
@@ -138,11 +159,12 @@ static void handle_on_state(motor_t *m) {
         return;
     }
 
+    if (!motor_transition(m, POWER_MODE_ON, POWER_MODE_ALERT))
+        return;
+    m->alert_peak = m->last_reading;
     printf("TRACK %c ALERT%s%s %umA\n", m->track_id,
            fault ? " FAULT" : "", overcurrent ? " OVERCURRENT" : "",
            motor_raw_to_ma(m->last_reading));
-    motor_set_mode(m, POWER_MODE_ALERT);
-    m->alert_peak = m->last_reading;
 }
 
 static void handle_alert_state(motor_t *m) {
@@ -156,19 +178,20 @@ static void handle_alert_state(motor_t *m) {
         m->last_bad_tick = ticks_now();
         if (elapsed < OVERCURRENT_TIMEOUT_MS) return;
 
-        printf("TRACK %c OVERLOAD after %lums (%umA, peak %umA, limit %umA)\n",
-               m->track_id, (unsigned long)elapsed,
-               motor_raw_to_ma(m->last_reading), motor_raw_to_ma(m->alert_peak),
-               motor_raw_to_ma(trip_limit(m)));
-        motor_set_mode(m, POWER_MODE_OVERLOAD);
+        if (motor_transition(m, POWER_MODE_ALERT, POWER_MODE_OVERLOAD))
+            printf("TRACK %c OVERLOAD after %lums (%umA, peak %umA, limit %umA)\n",
+                   m->track_id, (unsigned long)elapsed,
+                   motor_raw_to_ma(m->last_reading),
+                   motor_raw_to_ma(m->alert_peak),
+                   motor_raw_to_ma(trip_limit(m)));
         return;
     }
 
     // No faults — check if alert window has passed
-    if (elapsed > ALERT_WINDOW_MS) {
+    if (elapsed > ALERT_WINDOW_MS &&
+        motor_transition(m, POWER_MODE_ALERT, POWER_MODE_ON)) {
         printf("TRACK %c NORMAL (peak %umA)\n", m->track_id,
                motor_raw_to_ma(m->alert_peak));
-        motor_set_mode(m, POWER_MODE_ON);
     }
 }
 
@@ -177,6 +200,10 @@ static void handle_overload_state(motor_t *m) {
         return;
     }
 
+    // Switched off meanwhile: stays off.
+    if (!motor_transition(m, POWER_MODE_OVERLOAD, POWER_MODE_ALERT))
+        return;
+
     // Exponential backoff
     m->overcurrent_backoff_ms *= 2;
     if (m->overcurrent_backoff_ms > MAX_RETRY_WINDOW_MS) {
@@ -184,7 +211,6 @@ static void handle_overload_state(motor_t *m) {
     }
 
     printf("TRACK %c POWER RESTORE\n", m->track_id);
-    motor_set_mode(m, POWER_MODE_ALERT);
 }
 
 void motor_update(motor_t *m) {

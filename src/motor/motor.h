@@ -46,6 +46,8 @@ void motor_set_current_limit_ma(motor_t *m, uint16_t ma);
 // Trip at `raw` ADC units instead of the configured limit until cleared with
 // 0. Service Mode lends the programming track the main track's limit.
 void motor_override_limit(motor_t *m, uint16_t raw);
+// Off always wins. On starts a track that is off; one that's overloaded
+// comes back on the FSM's backoff. Safe from any task.
 void motor_set_power(motor_t *m, bool on);
 void motor_update(motor_t *m);
 bool motor_is_on(motor_t *m);

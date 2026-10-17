@@ -29,7 +29,6 @@
                                    * resets */
 #define WRITE_HOLD_MS       100   /* power kept on after a write so the
                                    * decoder can finish storing it (DCC-EX) */
-#define IDLE_RECHECK_MS     1000
 
 /* ---- ACK detection (svc_ack.h has the rules) ---------------------------
  * The smallest rise that counts sits a little under S-9.2.3's 60 mA so a
@@ -232,14 +231,8 @@ void task_servicemode(void *params)
     svc_request_t req;
 
     for (;;) {
-        if (xQueueReceive(g_queue, &req, pdMS_TO_TICKS(IDLE_RECHECK_MS))
-                != pdTRUE) {
-            /* Idle: keep the track off. Re-asserted every idle period, not
-             * just once — the track monitor's overload retry on the other
-             * core can race a power-off and switch the track back on. */
-            track_power(false);
+        if (xQueueReceive(g_queue, &req, portMAX_DELAY) != pdTRUE)
             continue;
-        }
 
         /* The PIO has been sending reset packets all along, so the decoder
          * sees a clean power-on cycle. */
