@@ -79,7 +79,7 @@ void motor_set_current_limit_ma(motor_t *m, uint16_t ma) {
 static int  track_power_calls;
 static bool last_track_power;
 void track_set_power(track_t *t, bool on) {
-    (void)t; track_power_calls++; last_track_power = on;
+    t->power_on = on; track_power_calls++; last_track_power = on;
 }
 
 /* dcc engine mocks — configure_mem writes don't touch DCC, but the
@@ -119,8 +119,10 @@ void dcc_pom_write_byte(dcc_engine_t *d, uint16_t a, bool is_long,
 #include "lcc/lcc_snip.h"
 
 /* Node registry capture — lcc_interface.c registers the CS node + any
- * train nodes; tests inspect g_cs_node directly via source include. */
-void lcc_task_init(void) {}
+ * train nodes; tests inspect g_cs_node directly via source include.
+ * The real lcc_events.c is linked; its table is reset here, as the real
+ * lcc_task_init does. */
+void lcc_task_init(void) { lcc_events_reset(); }
 void lcc_task_run(void)  {}
 void lcc_node_init(lcc_node_t *node, uint64_t id, lcc_node_role_t role) {
     memset(node, 0, sizeof(*node));
@@ -184,24 +186,23 @@ void lcc_memconfig_complete(uint16_t error, const uint8_t *data, uint8_t len) {
     if (data && len) memcpy(complete_data, data, len);
 }
 
+/* Global sends from lcc_events.c: the Identified replies. */
 typedef struct {
-    const lcc_node_t *node;
-    uint64_t          event_id;
-    uint8_t           flags;
-} event_reg_t;
-static event_reg_t captured_events[16];
-static int         captured_event_count;
+    uint16_t mti;
+    uint64_t event_id;
+} sent_event_t;
+static sent_event_t sent_events[16];
+static int          sent_event_count;
 
-bool lcc_events_register(lcc_node_t *node, uint64_t event_id, uint8_t flags,
-                         lcc_event_on_report_fn on_report) {
-    (void)on_report;
-    if (captured_event_count < 16) {
-        captured_events[captured_event_count].node = node;
-        captured_events[captured_event_count].event_id = event_id;
-        captured_events[captured_event_count].flags = flags;
-        captured_event_count++;
+void lcc_node_send_global(const lcc_node_t *node, uint16_t mti,
+                          const uint8_t *data, uint8_t dlc) {
+    (void)node;
+    if (sent_event_count < 16) {
+        sent_events[sent_event_count].mti = mti;
+        sent_events[sent_event_count].event_id =
+            dlc == 8 ? lcc_event_from_buf(data) : 0;
+        sent_event_count++;
     }
-    return true;
 }
 
 /* ---- MCP2515 LCC transport stub ----------------------------------------- */
@@ -270,7 +271,8 @@ static void reset_all(void) {
     captured_node_spaces_node = NULL;
     captured_node_spaces = NULL;
     captured_node_space_count = 0;
-    captured_event_count = 0;
+    sent_event_count = 0;
+    mock_track_main.power_on = false;
     complete_calls = 0;
     complete_error = 0;
     complete_len = 0;
@@ -287,6 +289,28 @@ static void reset_all(void) {
     /* Zero out the train pool between tests so the allocator gets a
      * clean slate on each run. */
     memset(g_train_used, 0, sizeof(g_train_used));
+}
+
+/* Hand lcc_events.c a frame from another node and collect the replies. */
+static void event_frame(uint16_t mti, uint64_t event_id) {
+    lcc_frame_t f = { .id = lcc_can_id(mti, 0x123) };
+    if (event_id) {
+        lcc_event_to_buf(event_id, f.data);
+        f.dlc = 8;
+    }
+    sent_event_count = 0;
+    lcc_events_handle_frame(&g_cs_node, &f);
+}
+
+/* MTI of the one reply sent for `event_id`, or 0 if there was none. */
+static uint16_t reply_mti(uint64_t event_id) {
+    uint16_t mti = 0;
+    for (int i = 0; i < sent_event_count; i++) {
+        if (sent_events[i].event_id != event_id) continue;
+        assert(mti == 0);
+        mti = sent_events[i].mti;
+    }
+    return mti;
 }
 
 /* ---- tests ------------------------------------------------------------- */
@@ -521,14 +545,9 @@ static void test_programming_track(void) {
     assert(h->size == 1024);
     assert(h->defer != NULL);
 
-    bool produced = false;
-    for (int i = 0; i < captured_event_count; i++) {
-        if (captured_events[i].node == &g_cs_node &&
-            captured_events[i].event_id == LCC_EVENT_IS_PROGRAMMING_TRACK &&
-            (captured_events[i].flags & LCC_EVENT_PRODUCER))
-            produced = true;
-    }
-    assert(produced);
+    event_frame(LCC_MTI_PRODUCER_IDENTIFY, LCC_EVENT_IS_PROGRAMMING_TRACK);
+    assert(reply_mti(LCC_EVENT_IS_PROGRAMMING_TRACK)
+           == LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN);
 
     /* Read CV 29 (address 28). */
     lcc_memconfig_deferred_t rd = { .is_write = false, .space = 0xF8,
@@ -578,6 +597,66 @@ static void test_programming_track(void) {
     printf("  PASS: programming track wiring\n");
 }
 
+/* Every way the CS identifies the emergency events gives the same
+ * states for the given main power. */
+static void check_emergency_states(uint16_t off_mti, uint16_t clear_mti) {
+    static const uint64_t events[4] = {
+        LCC_EVENT_EMERGENCY_OFF, LCC_EVENT_CLEAR_EMERG_OFF,
+        LCC_EVENT_EMERGENCY_STOP, LCC_EVENT_CLEAR_EMERG_STOP,
+    };
+    const uint16_t want[4] = {
+        off_mti, clear_mti,
+        LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN, LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN,
+    };
+
+    for (int i = 0; i < 4; i++) {
+        event_frame(LCC_MTI_CONSUMER_IDENTIFY, events[i]);
+        assert(sent_event_count == 1);
+        assert(reply_mti(events[i]) == want[i]);
+    }
+
+    /* Identify Events, global and addressed, and the announcement after
+     * Initialization Complete. */
+    for (int pass = 0; pass < 3; pass++) {
+        if (pass == 0) {
+            event_frame(LCC_MTI_EVENTS_IDENTIFY_GLOBAL, 0);
+        } else if (pass == 1) {
+            event_frame(LCC_MTI_EVENTS_IDENTIFY_ADDRESSED, 0);
+        } else {
+            sent_event_count = 0;
+            lcc_events_announce(&g_cs_node);
+        }
+        for (int i = 0; i < 4; i++)
+            assert(reply_mti(events[i]) == want[i]);
+        assert(reply_mti(LCC_EVENT_IS_PROGRAMMING_TRACK)
+               == LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN);
+    }
+}
+
+/* Emergency Off is Valid while main power is off and Clear Emergency Off
+ * while it is on; the e-stop pair stays Unknown. */
+static void test_power_event_state(void) {
+    reset_all();
+    lcc_interface_load_config();
+    lcc_interface_init(&mock_dcc_engine, &mock_track_main, NULL);
+
+    /* Off at boot. */
+    check_emergency_states(LCC_MTI_CONSUMER_IDENTIFIED_VALID,
+                           LCC_MTI_CONSUMER_IDENTIFIED_INVALID);
+
+    event_frame(LCC_MTI_EVENT_REPORT, LCC_EVENT_CLEAR_EMERG_OFF);
+    assert(last_track_power == true);
+    check_emergency_states(LCC_MTI_CONSUMER_IDENTIFIED_INVALID,
+                           LCC_MTI_CONSUMER_IDENTIFIED_VALID);
+
+    event_frame(LCC_MTI_EVENT_REPORT, LCC_EVENT_EMERGENCY_OFF);
+    assert(last_track_power == false);
+    check_emergency_states(LCC_MTI_CONSUMER_IDENTIFIED_VALID,
+                           LCC_MTI_CONSUMER_IDENTIFIED_INVALID);
+
+    printf("  PASS: power state in emergency event replies\n");
+}
+
 int main(void) {
     printf("test_lcc_interface:\n");
     test_node_id_generation();
@@ -586,6 +665,7 @@ int main(void) {
     test_allocator_and_events();
     test_emergency_events();
     test_programming_track();
+    test_power_event_state();
     printf("All LCC interface tests passed.\n");
     return 0;
 }

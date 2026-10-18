@@ -9,6 +9,7 @@ typedef struct {
     uint64_t               event_id;
     uint8_t                flags;
     lcc_event_on_report_fn on_report;
+    lcc_event_state_fn     state;
     bool                   used;
 } lcc_event_reg_t;
 
@@ -22,7 +23,8 @@ void lcc_events_reset(void)
 bool lcc_events_register(lcc_node_t *node,
                          uint64_t event_id,
                          uint8_t flags,
-                         lcc_event_on_report_fn on_report)
+                         lcc_event_on_report_fn on_report,
+                         lcc_event_state_fn state)
 {
     for (int i = 0; i < LCC_MAX_EVENT_REGISTRATIONS; i++) {
         if (!g_table[i].used) {
@@ -30,6 +32,7 @@ bool lcc_events_register(lcc_node_t *node,
             g_table[i].event_id  = event_id;
             g_table[i].flags     = flags;
             g_table[i].on_report = on_report;
+            g_table[i].state     = state;
             g_table[i].used      = true;
             return true;
         }
@@ -52,22 +55,42 @@ void lcc_events_send_report(const lcc_node_t *node, uint64_t event_id)
 
 /* ---- identify handlers ------------------------------------------------ */
 
+/* Send the registration's Producer or Consumer Identified (`role`),
+ * carrying its state: Unknown unless it registered a state callback. */
+static void send_identified(const lcc_event_reg_t *r, uint8_t role)
+{
+    lcc_event_state_t st = r->state ? r->state(r->node, r->event_id)
+                                    : LCC_EVENT_STATE_UNKNOWN;
+    bool producer = role == LCC_EVENT_PRODUCER;
+    uint16_t mti;
+    switch (st) {
+    case LCC_EVENT_STATE_VALID:
+        mti = producer ? LCC_MTI_PRODUCER_IDENTIFIED_VALID
+                       : LCC_MTI_CONSUMER_IDENTIFIED_VALID;
+        break;
+    case LCC_EVENT_STATE_INVALID:
+        mti = producer ? LCC_MTI_PRODUCER_IDENTIFIED_INVALID
+                       : LCC_MTI_CONSUMER_IDENTIFIED_INVALID;
+        break;
+    default:
+        mti = producer ? LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN
+                       : LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN;
+        break;
+    }
+    send_global_event(r->node, mti, r->event_id);
+}
+
 static void emit_identities_for_node(const lcc_node_t *node)
 {
     /* For each registration belonging to this node, emit the matching
-     * Producer/Consumer Identified frame. "Unknown" because we don't
-     * track stateful valid/invalid for event-of-state producers at the
-     * stack level — the traction layer overrides this for speed/fn
-     * feedback in M5+. */
+     * Producer/Consumer Identified frame. */
     for (int i = 0; i < LCC_MAX_EVENT_REGISTRATIONS; i++) {
         if (!g_table[i].used || g_table[i].node != node)
             continue;
         if (g_table[i].flags & LCC_EVENT_PRODUCER)
-            send_global_event(node, LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN,
-                              g_table[i].event_id);
+            send_identified(&g_table[i], LCC_EVENT_PRODUCER);
         if (g_table[i].flags & LCC_EVENT_CONSUMER)
-            send_global_event(node, LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN,
-                              g_table[i].event_id);
+            send_identified(&g_table[i], LCC_EVENT_CONSUMER);
     }
 }
 
@@ -78,17 +101,16 @@ void lcc_events_announce(const lcc_node_t *node)
 
 static void handle_single_identify(const lcc_node_t *node,
                                    uint64_t event_id,
-                                   uint8_t required_flag,
-                                   uint16_t reply_mti)
+                                   uint8_t role)
 {
     for (int i = 0; i < LCC_MAX_EVENT_REGISTRATIONS; i++) {
         if (!g_table[i].used || g_table[i].node != node)
             continue;
-        if (!(g_table[i].flags & required_flag))
+        if (!(g_table[i].flags & role))
             continue;
         if (g_table[i].event_id != event_id)
             continue;
-        send_global_event(node, reply_mti, event_id);
+        send_identified(&g_table[i], role);
         return;
     }
 }
@@ -108,16 +130,14 @@ void lcc_events_handle_frame(lcc_node_t *node, const lcc_frame_t *frame)
     if (mti == LCC_MTI_CONSUMER_IDENTIFY) {
         if (frame->dlc < 8) return;
         uint64_t ev = lcc_event_from_buf(frame->data);
-        handle_single_identify(node, ev, LCC_EVENT_CONSUMER,
-                               LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN);
+        handle_single_identify(node, ev, LCC_EVENT_CONSUMER);
         return;
     }
 
     if (mti == LCC_MTI_PRODUCER_IDENTIFY) {
         if (frame->dlc < 8) return;
         uint64_t ev = lcc_event_from_buf(frame->data);
-        handle_single_identify(node, ev, LCC_EVENT_PRODUCER,
-                               LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN);
+        handle_single_identify(node, ev, LCC_EVENT_PRODUCER);
         return;
     }
 

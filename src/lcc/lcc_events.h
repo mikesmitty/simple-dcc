@@ -29,14 +29,29 @@
  * and the registration has the CONSUMER flag set. */
 typedef void (*lcc_event_on_report_fn)(lcc_node_t *node, uint64_t event_id);
 
+/* An event's state as its Producer/Consumer Identified replies give it.
+ * Valid means that event's state is the one in effect now. */
+typedef enum {
+    LCC_EVENT_STATE_UNKNOWN = 0,
+    LCC_EVENT_STATE_VALID,
+    LCC_EVENT_STATE_INVALID,
+} lcc_event_state_t;
+
+/* Optional per registration: asked for the event's state each time one
+ * of its Identified replies goes out. */
+typedef lcc_event_state_t (*lcc_event_state_fn)(const lcc_node_t *node,
+                                                uint64_t event_id);
+
 /* Reset the registration table. Called from lcc_task_init. */
 void lcc_events_reset(void);
 
-/* Add a registration. Returns false if the table is full. */
+/* Add a registration. `state` may be NULL: its replies then say
+ * Unknown. Returns false if the table is full. */
 bool lcc_events_register(lcc_node_t *node,
                          uint64_t event_id,
                          uint8_t flags,
-                         lcc_event_on_report_fn on_report);
+                         lcc_event_on_report_fn on_report,
+                         lcc_event_state_fn state);
 
 /* Dispatch an inbound event-related frame: CONSUMER_IDENTIFY (0x08F4),
  * PRODUCER_IDENTIFY (0x0914), EVENT_REPORT (0x05B4), and IDENTIFY_*

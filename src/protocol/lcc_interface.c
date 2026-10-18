@@ -676,6 +676,19 @@ static void handle_emergency_event(lcc_node_t *node, uint64_t event_id) {
     }
 }
 
+/* Emergency Off is Valid while main power is commanded off, Clear
+ * Emergency Off while it is on. Commanded, not track_is_powered(): an
+ * overcurrent trip retries on its own and shouldn't look like power
+ * switched off. */
+static lcc_event_state_t power_event_state(const lcc_node_t *node,
+                                           uint64_t event_id) {
+    (void)node;
+    if (!g_track_main) return LCC_EVENT_STATE_UNKNOWN;
+    bool off = !g_track_main->power_on;
+    return (event_id == LCC_EVENT_EMERGENCY_OFF) == off
+           ? LCC_EVENT_STATE_VALID : LCC_EVENT_STATE_INVALID;
+}
+
 void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_input) {
     (void)pqueue_input;
 
@@ -725,7 +738,7 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
     lcc_memconfig_register_node_spaces(&g_cs_node, g_cs_node_spaces,
         (uint8_t)(sizeof(g_cs_node_spaces) / sizeof(g_cs_node_spaces[0])));
     lcc_events_register(&g_cs_node, LCC_EVENT_IS_PROGRAMMING_TRACK,
-                        LCC_EVENT_PRODUCER, NULL);
+                        LCC_EVENT_PRODUCER, NULL, NULL);
 
     /* Memory-config spaces — CDI size is computed from the generated
      * _cdi_data's NUL terminator (strlen gives XML byte count). */
@@ -737,15 +750,19 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
         (uint8_t)(sizeof(g_spaces_rw) / sizeof(g_spaces_rw[0])));
     lcc_memconfig_set_hooks(memcfg_reboot_hook, memcfg_factory_reset_hook);
 
-    /* Emergency event consumers (well-known OpenLCB events). */
+    /* Emergency event consumers (well-known OpenLCB events). The off
+     * pair reports main track power; e-stop is one-shot, with no stopped
+     * state to report. */
     lcc_events_register(&g_cs_node, LCC_EVENT_EMERGENCY_OFF,
-                        LCC_EVENT_CONSUMER, handle_emergency_event);
+                        LCC_EVENT_CONSUMER, handle_emergency_event,
+                        power_event_state);
     lcc_events_register(&g_cs_node, LCC_EVENT_CLEAR_EMERG_OFF,
-                        LCC_EVENT_CONSUMER, handle_emergency_event);
+                        LCC_EVENT_CONSUMER, handle_emergency_event,
+                        power_event_state);
     lcc_events_register(&g_cs_node, LCC_EVENT_EMERGENCY_STOP,
-                        LCC_EVENT_CONSUMER, handle_emergency_event);
+                        LCC_EVENT_CONSUMER, handle_emergency_event, NULL);
     lcc_events_register(&g_cs_node, LCC_EVENT_CLEAR_EMERG_STOP,
-                        LCC_EVENT_CONSUMER, handle_emergency_event);
+                        LCC_EVENT_CONSUMER, handle_emergency_event, NULL);
 
     /* Optional second LCC transport: MCP2515 CAN controller over SPI.
      * lcc_task_init() above already called lcc_if_init() which registered
