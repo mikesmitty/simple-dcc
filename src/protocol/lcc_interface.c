@@ -350,9 +350,12 @@ static uint64_t get_unique_node_id(void) {
     pico_unique_board_id_t board_id;
     pico_get_unique_board_id(&board_id);
 
-    // Use last 4 bytes of the 8-byte board ID as the unique part
-    // Set the top two bytes to the private range prefix (0x0601)
-    uint64_t id = 0x060100000000ULL;
+    // Locally allocated (0x0A, Unique Identifiers Standard 5.12) plus the
+    // last 5 bytes of the 8-byte board ID, as canbus-outpost does. Not
+    // 06.01: that range holds DCC train nodes, and tools that see the
+    // prefix read the low bits as a locomotive address.
+    uint64_t id = 0x0A0000000000ULL;
+    id |= ((uint64_t)board_id.id[3] << 32);
     id |= ((uint64_t)board_id.id[4] << 24);
     id |= ((uint64_t)board_id.id[5] << 16);
     id |= ((uint64_t)board_id.id[6] << 8);

@@ -315,9 +315,10 @@ static uint16_t reply_mti(uint64_t event_id) {
 
 /* ---- tests ------------------------------------------------------------- */
 
-/* Board ID is 0x1122334455667788. get_unique_node_id() uses the last 4
- * bytes: 0x55667788 → CS node ID 0x060155667788. Train NID base is the
- * well-known 0x060100000000 (not derived from board ID). */
+/* Board ID is 0x1122334455667788. get_unique_node_id() uses the last 5
+ * bytes in the locally allocated range: CS node ID 0x0A4455667788, kept
+ * out of the 06.01 train node range. Train NID base is the well-known
+ * 0x060100000000 (not derived from board ID). */
 static void test_node_id_generation(void) {
     reset_all();
 
@@ -325,8 +326,8 @@ static void test_node_id_generation(void) {
     lcc_interface_init(&mock_dcc_engine, &mock_track_main, NULL);
 
     uint64_t cs_id = g_cs_node.id;
-    assert((cs_id & 0xFFFF00000000ULL) == 0x060100000000ULL);
-    assert((cs_id & 0x0000FFFFFFFFULL) == 0x0000055667788ULL);
+    assert(cs_id == 0x0A4455667788ULL);
+    assert((cs_id & 0xFFFF00000000ULL) != LCC_TRAIN_NODE_ID_BASE);
 
     uint64_t train_base = lcc_interface_get_train_node_id_base();
     assert(train_base == LCC_TRAIN_NODE_ID_BASE);
