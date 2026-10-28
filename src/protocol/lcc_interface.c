@@ -14,6 +14,7 @@
 #include "lcc/lcc_train_search.h"
 #include "mcp2515/mcp2515_lcc.h"
 #include "servicemode/servicemode.h"
+#include "railcom/railcom.h"
 #include "hardware/spi.h"
 #include "cdi_data.h"
 
@@ -506,11 +507,31 @@ static void traction_pom_write_byte(uint16_t addr, bool is_long,
     if (g_dcc_engine) dcc_pom_write_byte(g_dcc_engine, addr, is_long, cv, value);
 }
 
+/* POM read over RailCom. The completion callback runs on task_railcom;
+ * memconfig sends the reply from the LCC task. */
+static void pom_read_done(bool answered, uint8_t value, void *ctx) {
+    (void)ctx;
+    if (answered)
+        lcc_memconfig_complete(0, &value, 1);
+    else
+        lcc_memconfig_complete(LCC_ERR_DCC_NO_LOCO, NULL, 0);
+}
+static uint16_t traction_pom_read_byte(uint16_t addr, bool is_long,
+                                       uint16_t cv) {
+    switch (railcom_pom_read(addr, is_long, cv, pom_read_done, NULL)) {
+    case RAILCOM_READ_STARTED: return 0;
+    case RAILCOM_READ_BUSY:    return LCC_ERR_TEMPORARY;
+    case RAILCOM_READ_OFF:     break;
+    }
+    return LCC_ERR_UNIMPLEMENTED_CMD;  /* as without RailCom */
+}
+
 static const lcc_traction_hooks_t g_traction_hooks = {
     .set_throttle   = traction_set_throttle,
     .set_function   = traction_set_function,
     .emergency_stop = traction_emergency_stop,
     .pom_write_byte = traction_pom_write_byte,
+    .pom_read_byte  = traction_pom_read_byte,
 };
 
 // --- Programming track (Service Mode) ---------------------------------

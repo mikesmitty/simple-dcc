@@ -6,6 +6,7 @@ A simple LCC-connected DCC command station, because sometimes a tool just needs 
 
 - DCC signal generation
 - RailCom cutout support
+- CV reads on the main over RailCom, with the detector shield in `hardware/railcom-detector`
 
 ## Current Reference Hardware
 

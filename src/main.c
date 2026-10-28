@@ -14,6 +14,7 @@
 #include "motor/motor.h"
 #include "track/track.h"
 #include "servicemode/servicemode.h"
+#include "railcom/railcom.h"
 #include "display/display.h"
 
 #define WAVEGEN_QUEUE_DEPTH  8
@@ -135,6 +136,16 @@ int main(void) {
     dcc_init(&dcc_engine, pqueue_input_queue);
     printf("[INIT] DCC engine ready\n");
 
+    // RailCom receiver (detector shield on the main track). It only hears
+    // anything while the cutout is on, which can change at runtime.
+    bool railcom_ok = railcom_init(&wavegen, &dcc_engine);
+    if (!railcom_ok) {
+        printf("[INIT] WARN: RailCom receiver init failed\n");
+    } else {
+        printf("[INIT] RailCom receiver ready (UART0 RX on GPIO %d)\n",
+               PIN_RAILCOM_RX);
+    }
+
     // Service Mode (programming track) — brings up PIO2 on the prog
     // signal pin so JMRI's Service Mode programmer can read/write CVs
     // on whatever decoder is on the prog track.
@@ -167,6 +178,9 @@ int main(void) {
     xTaskCreate(task_serial,         "serial",    1024, NULL,             1, NULL);
     if (servicemode_ok) {
         xTaskCreate(task_servicemode, "svcmode",  512,  NULL,             1, NULL);
+    }
+    if (railcom_ok) {
+        xTaskCreate(task_railcom,    "railcom",   512,  NULL,             2, NULL);
     }
     if (display_ok) {
         xTaskCreate(task_display,    "display",   1024, NULL,             1, NULL);

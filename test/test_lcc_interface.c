@@ -245,6 +245,28 @@ svc_result_t servicemode_submit(svc_op_t op, uint16_t cv, uint8_t value,
     return svc_submit_result;
 }
 
+/* ---- RailCom stub ------------------------------------------------------ */
+
+#include "railcom/railcom.h"
+
+static int                 rc_read_calls;
+static uint16_t            rc_last_addr;
+static bool                rc_last_long;
+static uint16_t            rc_last_cv;
+static railcom_pom_done_fn rc_last_done;
+static railcom_result_t    rc_read_result;
+
+railcom_result_t railcom_pom_read(uint16_t address, bool is_long, uint16_t cv,
+                                  railcom_pom_done_fn done, void *ctx) {
+    (void)ctx;
+    rc_read_calls++;
+    rc_last_addr = address;
+    rc_last_long = is_long;
+    rc_last_cv = cv;
+    rc_last_done = done;
+    return rc_read_result;
+}
+
 /* ---- lcc_interface.c under test ---------------------------------------- */
 
 #include "../src/protocol/lcc_interface.c"
@@ -638,6 +660,39 @@ static void test_programming_track(void) {
     printf("  PASS: programming track wiring\n");
 }
 
+static void test_pom_read_wiring(void) {
+    reset_all();
+    lcc_interface_load_config();
+    lcc_interface_init(&mock_dcc_engine, &mock_track_main, NULL);
+    complete_calls = 0;
+    rc_read_calls = 0;
+
+    /* The train CV space's read hook starts a RailCom POM read. */
+    rc_read_result = RAILCOM_READ_STARTED;
+    assert(g_traction_hooks.pom_read_byte(3000, true, 29) == 0);
+    assert(rc_read_calls == 1);
+    assert(rc_last_addr == 3000 && rc_last_long && rc_last_cv == 29);
+    assert(complete_calls == 0);
+
+    rc_last_done(true, 0x26, NULL);
+    assert(complete_calls == 1);
+    assert(complete_error == 0);
+    assert(complete_len == 1 && complete_data[0] == 0x26);
+
+    rc_last_done(false, 0, NULL);
+    assert(complete_error == LCC_ERR_DCC_NO_LOCO);
+    assert(complete_len == 0);
+
+    /* Refusals come straight back as error codes. */
+    rc_read_result = RAILCOM_READ_BUSY;
+    assert(g_traction_hooks.pom_read_byte(3, false, 1) == LCC_ERR_TEMPORARY);
+    rc_read_result = RAILCOM_READ_OFF;
+    assert(g_traction_hooks.pom_read_byte(3, false, 1)
+           == LCC_ERR_UNIMPLEMENTED_CMD);
+
+    printf("  PASS: POM read wiring\n");
+}
+
 /* Every way the CS identifies the emergency events gives the same
  * states for the given main power. */
 static void check_emergency_states(uint16_t off_mti, uint16_t clear_mti) {
@@ -706,6 +761,7 @@ int main(void) {
     test_allocator_and_events();
     test_emergency_events();
     test_programming_track();
+    test_pom_read_wiring();
     test_power_event_state();
     printf("All LCC interface tests passed.\n");
     return 0;

@@ -22,6 +22,11 @@
 #define PIN_FAULT_B         46  // A5 (nFAULT)
 #define ADC_CHANNEL_B       2   // A1
 
+// ---- RailCom detector shield (hardware/railcom-detector) ----
+// Its data comes in on D0, UART0 RX. The cutout gate is the main channel's
+// brake pin (PIN_BRAKE_A, D9).
+#define PIN_RAILCOM_RX      1   // D0
+
 // ---- Motor shield current sensing ----
 // mA per raw unit of the 12-bit ADC: mA = raw * SENSE_FACTOR_8874. From the
 // EX-MotorShield8874 README (1.27 at 5 V IOREF, 1.24 at 3.3 V); DCC-EX uses

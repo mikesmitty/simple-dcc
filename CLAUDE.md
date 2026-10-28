@@ -39,6 +39,7 @@ cmake .. && make && ctest
 | 4 | task_track_monitor | 1ms overcurrent/fault check |
 | 3 | task_dcc_reminder | Cycle speed + function reminders |
 | 2 | task_protocol | Pump LCC RX queue + 100 ms alias/flush tick |
+| 2 | task_railcom | RailCom POM reads on the main, channel 1 address log |
 | 1 | task_serial | USB CDC read, GridConnect parsing |
 | 1 | task_servicemode | Programming-track CV read/write (Service Mode) |
 
@@ -48,6 +49,7 @@ cmake .. && make && ctest
 USB CDC → task_serial → GridConnect parser → CAN RX → src/lcc/
 src/lcc/ traction callbacks → DCC engine → priority queue → wavegen → PIO
 src/lcc/ memconfig 0xF8 on CS node → task_servicemode → PIO2 (prog track) → ACK via ADC
+src/lcc/ memconfig 0xF8 on train node → task_railcom → POM read on main → RailCom reply on UART0
 ```
 
 ## Conventions

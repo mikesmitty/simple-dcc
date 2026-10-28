@@ -107,6 +107,25 @@ target_include_directories(test_mcp2515_framing PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/../src
 )
 
+add_executable(test_railcom_decode
+    test_railcom_decode.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/railcom/railcom_decode.c
+)
+target_include_directories(test_railcom_decode PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+)
+
+add_executable(test_pom_read
+    test_pom_read.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/railcom/pom_read.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/railcom/railcom_decode.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/dcc/packet.c
+)
+target_include_directories(test_pom_read PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+)
+
 enable_testing()
 add_test(NAME test_packet COMMAND test_packet)
 add_test(NAME test_priority_queue_logic COMMAND test_priority_queue_logic)
@@ -119,3 +138,5 @@ add_test(NAME test_svc_cv COMMAND test_svc_cv)
 add_test(NAME test_lcc_interface COMMAND test_lcc_interface)
 add_test(NAME test_lcc_if_multitransport COMMAND test_lcc_if_multitransport)
 add_test(NAME test_mcp2515_framing COMMAND test_mcp2515_framing)
+add_test(NAME test_railcom_decode COMMAND test_railcom_decode)
+add_test(NAME test_pom_read COMMAND test_pom_read)

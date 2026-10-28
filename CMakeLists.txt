@@ -112,6 +112,9 @@ add_executable(simple-dcc
     src/servicemode/servicemode.c
     src/servicemode/svc_cv.c
     src/servicemode/svc_ack.c
+    src/railcom/railcom.c
+    src/railcom/railcom_decode.c
+    src/railcom/pom_read.c
     src/util/nv_storage.c
     src/display/display.c
     src/mcp2515/mcp2515.c
