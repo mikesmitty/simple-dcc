@@ -9,3 +9,10 @@ cmake-build-*/
 *.dis
 *.map
 .DS_Store
+
+# KiCad
+hardware/**/*-backups
+hardware/**/*auto*save*
+hardware/**/production/
+*.lck
+*.bak
