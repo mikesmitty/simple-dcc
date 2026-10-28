@@ -13,27 +13,32 @@
 // Queue for packets to be sent to the PIO (defined in main.c)
 extern QueueHandle_t wavegen_queue;
 
+static const pio_program_t *wave_program(wavegen_mode_t mode) {
+    switch (mode) {
+    case WAVEGEN_NORMAL:       return &wavegen_program;
+    case WAVEGEN_NO_CUTOUT:    return &wavegen_nocutout_program;
+    case WAVEGEN_SERVICE_MODE: return &wavegen_servicemode_program;
+    }
+    return &wavegen_program;
+}
+
 static bool init_wave_sm(wavegen_t *wg, wavegen_mode_t mode,
                          uint signal_pin, uint signal_pin_count) {
+    const pio_program_t *program = wave_program(mode);
+    if (!pio_can_add_program(pio0, program)) return false;
+    wg->wave_offset = pio_add_program(pio0, program);
+    wg->wave_sm = pio_claim_unused_sm(pio0, true);
+
     switch (mode) {
     case WAVEGEN_NORMAL:
-        if (!pio_can_add_program(pio0, &wavegen_program)) return false;
-        wg->wave_offset = pio_add_program(pio0, &wavegen_program);
-        wg->wave_sm = pio_claim_unused_sm(pio0, true);
         wavegen_program_init(pio0, wg->wave_sm, wg->wave_offset,
                              signal_pin, signal_pin_count);
         break;
     case WAVEGEN_NO_CUTOUT:
-        if (!pio_can_add_program(pio0, &wavegen_nocutout_program)) return false;
-        wg->wave_offset = pio_add_program(pio0, &wavegen_nocutout_program);
-        wg->wave_sm = pio_claim_unused_sm(pio0, true);
         wavegen_nocutout_program_init(pio0, wg->wave_sm, wg->wave_offset,
                                       signal_pin, signal_pin_count);
         break;
     case WAVEGEN_SERVICE_MODE:
-        if (!pio_can_add_program(pio0, &wavegen_servicemode_program)) return false;
-        wg->wave_offset = pio_add_program(pio0, &wavegen_servicemode_program);
-        wg->wave_sm = pio_claim_unused_sm(pio0, true);
         wavegen_servicemode_program_init(pio0, wg->wave_sm, wg->wave_offset,
                                          signal_pin);
         break;
@@ -77,12 +82,15 @@ bool wavegen_reinit(wavegen_t *wg, wavegen_mode_t mode,
 
     wavegen_enable(wg, false);
     
-    // Stop and unclaim SMs
+    // Stop and unclaim SMs, and free their instruction memory: the cutout
+    // wavegen program leaves no room in PIO0 for another one beside it.
     pio_sm_set_enabled(wg->wave_pio, wg->wave_sm, false);
     pio_sm_unclaim(wg->wave_pio, wg->wave_sm);
+    pio_remove_program(wg->wave_pio, wave_program(wg->mode), wg->wave_offset);
     if (wg->mode == WAVEGEN_NORMAL) {
         pio_sm_set_enabled(wg->cutout_pio, wg->cutout_sm, false);
         pio_sm_unclaim(wg->cutout_pio, wg->cutout_sm);
+        pio_remove_program(wg->cutout_pio, &cutout_program, wg->cutout_offset);
     }
     
     wg->initialized = false;
