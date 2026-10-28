@@ -118,10 +118,9 @@ void packet_make_idle(dcc_packet_t *pkt) {
 
 #define SHORT_ADDRESS_MAX_PKT 127
 
-void packet_build_pom_write_byte(dcc_packet_t *pkt,
-                                 uint16_t address, bool is_long,
-                                 uint16_t cv, uint8_t value,
-                                 int8_t repeats) {
+static void packet_build_pom(dcc_packet_t *pkt, uint8_t opcode,
+                             uint16_t address, bool is_long,
+                             uint16_t cv, uint8_t value, int8_t repeats) {
     packet_reset(pkt);
 
     if (is_long || address > SHORT_ADDRESS_MAX_PKT) {
@@ -133,13 +132,26 @@ void packet_build_pom_write_byte(dcc_packet_t *pkt,
 
     // NMRA S-9.2.1: the 10-bit CV number on the wire is (cv - 1).
     uint16_t wire_cv = (uint16_t)(cv - 1) & 0x3FF;
-    packet_add_byte(pkt, 0xEC | (uint8_t)((wire_cv >> 8) & 0x03));
+    packet_add_byte(pkt, opcode | (uint8_t)((wire_cv >> 8) & 0x03));
     packet_add_byte(pkt, (uint8_t)(wire_cv & 0xFF));
     packet_add_byte(pkt, value);
 
     pkt->address  = address;
     pkt->priority = PRIORITY_HIGH;
     pkt->repeats  = repeats;
+}
+
+void packet_build_pom_write_byte(dcc_packet_t *pkt,
+                                 uint16_t address, bool is_long,
+                                 uint16_t cv, uint8_t value,
+                                 int8_t repeats) {
+    packet_build_pom(pkt, 0xEC, address, is_long, cv, value, repeats);
+}
+
+void packet_build_pom_read_byte(dcc_packet_t *pkt,
+                                uint16_t address, bool is_long,
+                                uint16_t cv, int8_t repeats) {
+    packet_build_pom(pkt, 0xE4, address, is_long, cv, 0, repeats);
 }
 
 static void packet_build_svc_direct(dcc_packet_t *pkt, uint8_t opcode,

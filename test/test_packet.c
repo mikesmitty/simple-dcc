@@ -282,6 +282,34 @@ static void test_svc_verify_bit_layout(void) {
     printf("  PASS: SVC verify, bit layout\n");
 }
 
+static void test_pom_read_layout(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // Address 3000 (long), CV 1024: verify-byte opcode 1110_01_VV with the
+    // CV's high bits (1023 = 0x3FF), and a zero data byte.
+    packet_build_pom_read_byte(pkt, 3000, true, 1024, 1);
+    assert(pkt->len == 5);
+    assert(pkt->data[0] == 0xCB);
+    assert(pkt->data[1] == 0xB8);
+    assert(pkt->data[2] == 0xE7);
+    assert(pkt->data[3] == 0xFF);
+    assert(pkt->data[4] == 0x00);
+    assert(pkt->priority == PRIORITY_HIGH);
+    assert(pkt->repeats == 1);
+
+    // Short address 3, CV 1.
+    packet_build_pom_read_byte(pkt, 3, false, 1, 0);
+    assert(pkt->len == 4);
+    assert(pkt->data[0] == 0x03);
+    assert(pkt->data[1] == 0xE4);
+    assert(pkt->data[2] == 0x00);
+    assert(pkt->data[3] == 0x00);
+
+    packet_free(pkt);
+    printf("  PASS: POM read layout\n");
+}
+
 int main(void) {
     printf("test_packet:\n");
     test_idle_packet_encode();
@@ -294,6 +322,7 @@ int main(void) {
     test_pom_write_high_cv_address();
     test_pom_write_auto_long_address();
     test_pom_write_short_forced_long();
+    test_pom_read_layout();
     test_svc_write_byte_layout();
     test_svc_verify_byte_layout();
     test_svc_high_cv();

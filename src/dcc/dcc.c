@@ -259,6 +259,14 @@ void dcc_pom_write_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,
     send_packet(dcc, pkt);
 }
 
+void dcc_pom_read_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,
+                       uint16_t cv, int8_t repeats) {
+    dcc_packet_t *pkt = packet_alloc();
+    if (!pkt) return;
+    packet_build_pom_read_byte(pkt, address, is_long, cv, repeats);
+    send_packet(dcc, pkt);
+}
+
 static void send_reminder_packets(dcc_engine_t *dcc, loco_state_t *loco) {
     dcc_packet_t *pkt = NULL;
 

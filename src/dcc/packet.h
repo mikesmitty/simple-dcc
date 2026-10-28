@@ -59,6 +59,15 @@ void           packet_build_pom_write_byte(dcc_packet_t *pkt,
                                            uint16_t cv, uint8_t value,
                                            int8_t repeats);
 
+// Build a POM Verify Byte packet, which RailCom decoders answer with the
+// CV's value in channel 2 of the following cutout (RCN-217):
+//     {address}  1110_01_VV  CCCCCCCC  00000000
+// Same address and CV rules as packet_build_pom_write_byte. Sets
+// PRIORITY_HIGH and the caller-supplied repeat count.
+void           packet_build_pom_read_byte(dcc_packet_t *pkt,
+                                          uint16_t address, bool is_long,
+                                          uint16_t cv, int8_t repeats);
+
 // Build an NMRA S-9.2.3 Direct Byte Service Mode packet. Service Mode
 // packets have no address byte — they are broadcast on the isolated
 // programming track. Wire layout:

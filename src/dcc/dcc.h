@@ -84,6 +84,11 @@ void dcc_emergency_stop_all(dcc_engine_t *dcc);
 void dcc_pom_write_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,
                         uint16_t cv, uint8_t value);
 
+// Programming-on-Main read: a POM Verify Byte, sent `repeats` + 1 times
+// back to back. A RailCom decoder answers in the following cutouts.
+void dcc_pom_read_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,
+                       uint16_t cv, int8_t repeats);
+
 // Reminder loop (called periodically from task_dcc_reminder)
 void dcc_update(dcc_engine_t *dcc);
 
