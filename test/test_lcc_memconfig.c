@@ -387,6 +387,73 @@ static void test_sync_write_offers_the_rest(void) {
     printf("  PASS: a handler taking part of a write is offered the rest\n");
 }
 
+/* A space that answers addresses 0-3 itself and passes the rest on. */
+static uint16_t mixed_read(lcc_node_t *node, uint32_t addr, uint16_t count,
+                           uint8_t *out, uint16_t *error) {
+    (void)node;
+    if (addr >= 4) {
+        *error = LCC_MEMCFG_DEFER;
+        return 0;
+    }
+    memcpy(out, &g_cfg[addr], count);
+    return count;
+}
+
+static void test_read_handler_passes_on_to_defer(void) {
+    reset_all();
+    static const lcc_memspace_handler_t mixed[] = {
+        { .space = 0xF8, .size = 16, .read = mixed_read,
+          .write = cfg_write, .defer = mock_defer },
+    };
+    lcc_node_t node = g_node;
+    lcc_memconfig_register_node_spaces(&node, mixed, 1);
+
+    /* Answered at once, without taking the deferred slot. */
+    uint8_t pkt[16];
+    uint8_t len = mc_read(pkt, 1, 0xF8, 1);
+    lcc_memconfig_handle(&node, 0x123, pkt, len);
+    const uint8_t now[] = { 0x20, 0x50, 0, 0, 0, 1, 0xF8, 0x11 };
+    assert(g_defer_calls == 0);
+    assert(g_sent_count == 1);
+    assert_bytes(&g_sent[0], now, sizeof(now));
+    assert(!lcc_memconfig_deferred_pending());
+
+    /* Passed on, with the requested count. */
+    len = mc_read(pkt, 5, 0xF8, 2);
+    lcc_memconfig_handle(&node, 0x123, pkt, len);
+    assert(g_defer_calls == 1);
+    assert(g_last_req.addr == 5 && g_last_req.count == 2);
+    assert(g_sent_count == 1);
+    uint8_t v = 0x42;
+    lcc_memconfig_complete(0, &v, 1);
+    lcc_memconfig_flush_deferred();
+    const uint8_t later[] = { 0x20, 0x50, 0, 0, 0, 5, 0xF8, 0x42 };
+    assert(g_sent_count == 2);
+    assert_bytes(&g_sent[1], later, sizeof(later));
+
+    /* Writes still go to the write handler. */
+    uint8_t data = 0x77;
+    len = mc_write(pkt, 6, 0xF8, &data, 1);
+    lcc_memconfig_handle(&node, 0x123, pkt, len);
+    assert(g_defer_calls == 1);
+    assert(g_cfg[6] == 0x77);
+    assert(g_sent_count == 3);
+
+    /* With no defer hook, passing on fails the read. */
+    static const lcc_memspace_handler_t no_defer[] = {
+        { .space = 0xF8, .size = 16, .read = mixed_read },
+    };
+    lcc_memconfig_register_node_spaces(&node, no_defer, 1);
+    len = mc_read(pkt, 5, 0xF8, 1);
+    lcc_memconfig_handle(&node, 0x123, pkt, len);
+    const uint8_t failed[] = { 0x20, 0x58, 0, 0, 0, 5, 0xF8, 0x10, 0x00 };
+    assert(g_sent_count == 4);
+    assert_bytes(&g_sent[3], failed, sizeof(failed));
+    assert(!lcc_memconfig_deferred_pending());
+
+    printf("  PASS: a read handler can pass requests on to defer\n");
+}
+
 static void test_deferred_read_success(void) {
     reset_all();
     uint8_t pkt[16];
@@ -610,6 +677,7 @@ int main(void) {
     test_get_options();
     test_sync_write_failures();
     test_sync_write_offers_the_rest();
+    test_read_handler_passes_on_to_defer();
     test_deferred_read_success();
     test_deferred_read_failure();
     test_deferred_write_success();

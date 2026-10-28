@@ -123,8 +123,9 @@ static void send_reply(lcc_node_t *node, uint16_t dst_alias, uint8_t cmd,
 
 /* ---- deferred requests ------------------------------------------------ */
 
-/* One slot: the only deferred space today is the programming track, which
- * can run a single CV op at a time anyway. State moves IDLE → PENDING on
+/* One slot: the deferred requests today are CV operations on the
+ * programming track and CV reads on the main, which the command station
+ * runs one at a time anyway. State moves IDLE → PENDING on
  * the LCC task, PENDING → DONE on whichever task finishes the op, and
  * DONE → IDLE back on the LCC task once the reply is out. */
 enum {
@@ -264,7 +265,7 @@ static uint16_t parse_rw(const lcc_node_t *node, const uint8_t *buf,
         return LCC_ERR_SPACE_UNKNOWN;
     if (rq->h->read_only || (!rq->h->defer && !rq->h->write))
         return LCC_ERR_WRITE_READ_ONLY;
-    if (!rq->h->defer && rq->addr >= rq->h->size)
+    if (rq->h->write && rq->addr >= rq->h->size)
         return LCC_ERR_OUT_OF_BOUNDS;
     return 0;
 }
@@ -424,7 +425,7 @@ static void handle_read(lcc_node_t *node, uint16_t src_alias,
     uint32_t addr  = rq.addr;
     uint8_t  count = rq.count;
 
-    if (h->defer) {
+    if (h->defer && !h->read) {
         start_deferred(node, src_alias, buf[1], space, addr, count, NULL, h);
         return;
     }
@@ -442,6 +443,14 @@ static void handle_read(lcc_node_t *node, uint16_t src_alias,
         count = (uint8_t)sizeof(data);
     if (count > 0)
         produced = h->read(node, addr, count, data, &error);
+    if (error == LCC_MEMCFG_DEFER) {
+        if (h->defer) {
+            start_deferred(node, src_alias, buf[1], space, addr, rq.count,
+                           NULL, h);
+            return;
+        }
+        error = LCC_ERR_PERMANENT;  /* nowhere to pass it on to */
+    }
     if (produced > count)
         produced = count;
 
@@ -462,7 +471,7 @@ static void handle_write(lcc_node_t *node, uint16_t src_alias,
     uint8_t  count = rq.count;
     const uint8_t *write_data = rq.data;
 
-    if (h->defer) {
+    if (h->defer && !h->write) {
         start_deferred(node, src_alias, buf[1], rq.space, addr, count,
                        write_data, h);
         return;

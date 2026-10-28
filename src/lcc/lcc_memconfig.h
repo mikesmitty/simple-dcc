@@ -28,7 +28,10 @@
  * number of bytes actually produced (may be less than `count` near the
  * end of the space). Implementations must never write past `out`. If the
  * address can't be read at all, set `*error` (an OpenLCB error code; it
- * starts at 0) and the requester gets a Read Reply Failed carrying it. */
+ * starts at 0) and the requester gets a Read Reply Failed carrying it.
+ * A space with a `defer` hook may instead set `*error` to
+ * LCC_MEMCFG_DEFER: the read is then handed to `defer`, so a space can
+ * answer some addresses at once and others later. */
 typedef uint16_t (*lcc_memspace_read_fn)(lcc_node_t *node,
                                          uint32_t addr, uint16_t count,
                                          uint8_t *out, uint16_t *error);
@@ -63,6 +66,10 @@ typedef struct {
 typedef uint16_t (*lcc_memspace_defer_fn)(lcc_node_t *node,
                                           const lcc_memconfig_deferred_t *req);
 
+/* Not an OpenLCB error code: a `read` handler's way of passing a request
+ * on to the space's `defer` hook. */
+#define LCC_MEMCFG_DEFER  0xFFFFu
+
 typedef struct lcc_memspace_handler {
     uint8_t                space;     /* 0xFF / 0xFE / 0xFD / 0xFC / 0xFB / 0xF8 */
     uint32_t               size;      /* bytes; highest-address reply = size-1 */
@@ -70,9 +77,11 @@ typedef struct lcc_memspace_handler {
     lcc_memspace_read_fn   read;
     lcc_memspace_write_fn  write;     /* may be NULL iff read_only */
     lcc_memspace_update_fn update_complete;  /* may be NULL */
-    /* When non-NULL, read/write are bypassed: requests are ACKed with
-     * Reply Pending and handed here instead. Only one deferred request is
-     * in flight stack-wide; others get a temporary error until it ends. */
+    /* When non-NULL, requests are ACKed with Reply Pending and handed here
+     * instead of to read/write: all reads if `read` is NULL, otherwise the
+     * ones `read` passes on with LCC_MEMCFG_DEFER; likewise all writes if
+     * `write` is NULL. Only one deferred request is in flight stack-wide;
+     * others get a temporary error until it ends. */
     lcc_memspace_defer_fn  defer;
 } lcc_memspace_handler_t;
 
