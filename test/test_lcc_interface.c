@@ -58,8 +58,8 @@ static int            wavegen_reinit_count;
 static wavegen_mode_t last_wavegen_mode;
 
 bool wavegen_reinit(wavegen_t *wg, wavegen_mode_t mode,
-                    uint signal_pin, uint signal_pin_count, uint brake_pin) {
-    (void)signal_pin; (void)signal_pin_count; (void)brake_pin;
+                    uint signal_pin, uint brake_pin) {
+    (void)signal_pin; (void)brake_pin;
     wavegen_reinit_count++;
     last_wavegen_mode = mode;
     wg->mode = mode;

@@ -124,7 +124,7 @@ int main(void) {
     // final ownership of the brake pin away from SIO
     bool railcom = lcc_interface_railcom_enabled();
     if (!wavegen_init(&wavegen, railcom ? WAVEGEN_NORMAL : WAVEGEN_NO_CUTOUT,
-                      sig_a, 2, brk_a)) {
+                      sig_a, brk_a)) {
         printf("[INIT] ERROR: wavegen init failed\n");
         for (;;) {}
     }

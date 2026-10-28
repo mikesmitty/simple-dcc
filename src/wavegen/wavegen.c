@@ -23,7 +23,7 @@ static const pio_program_t *wave_program(wavegen_mode_t mode) {
 }
 
 static bool init_wave_sm(wavegen_t *wg, wavegen_mode_t mode,
-                         uint signal_pin, uint signal_pin_count) {
+                         uint signal_pin) {
     const pio_program_t *program = wave_program(mode);
     if (!pio_can_add_program(pio0, program)) return false;
     wg->wave_offset = pio_add_program(pio0, program);
@@ -31,12 +31,11 @@ static bool init_wave_sm(wavegen_t *wg, wavegen_mode_t mode,
 
     switch (mode) {
     case WAVEGEN_NORMAL:
-        wavegen_program_init(pio0, wg->wave_sm, wg->wave_offset,
-                             signal_pin, signal_pin_count);
+        wavegen_program_init(pio0, wg->wave_sm, wg->wave_offset, signal_pin);
         break;
     case WAVEGEN_NO_CUTOUT:
         wavegen_nocutout_program_init(pio0, wg->wave_sm, wg->wave_offset,
-                                      signal_pin, signal_pin_count);
+                                      signal_pin);
         break;
     case WAVEGEN_SERVICE_MODE:
         wavegen_servicemode_program_init(pio0, wg->wave_sm, wg->wave_offset,
@@ -57,11 +56,11 @@ static bool init_cutout_sm(wavegen_t *wg, uint brake_pin) {
 }
 
 bool wavegen_init(wavegen_t *wg, wavegen_mode_t mode,
-                  uint signal_pin, uint signal_pin_count, uint brake_pin) {
+                  uint signal_pin, uint brake_pin) {
     wg->mode = mode;
     wg->initialized = false;
 
-    if (!init_wave_sm(wg, mode, signal_pin, signal_pin_count)) {
+    if (!init_wave_sm(wg, mode, signal_pin)) {
         return false;
     }
 
@@ -77,7 +76,7 @@ bool wavegen_init(wavegen_t *wg, wavegen_mode_t mode,
 }
 
 bool wavegen_reinit(wavegen_t *wg, wavegen_mode_t mode,
-                    uint signal_pin, uint signal_pin_count, uint brake_pin) {
+                    uint signal_pin, uint brake_pin) {
     if (!wg->initialized) return false;
 
     wavegen_enable(wg, false);
@@ -94,7 +93,7 @@ bool wavegen_reinit(wavegen_t *wg, wavegen_mode_t mode,
     }
     
     wg->initialized = false;
-    return wavegen_init(wg, mode, signal_pin, signal_pin_count, brake_pin);
+    return wavegen_init(wg, mode, signal_pin, brake_pin);
 }
 
 void wavegen_enable(wavegen_t *wg, bool enabled) {

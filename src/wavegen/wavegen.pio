@@ -16,12 +16,12 @@
 
 set y, 15                  ; Set the preamble length to 16 (n-1)
 preamble:
-    set pins, 0b11    [28] ; Set pin high for the preamble
-    set pins, 0b00    [27] ; Set pin low for the preamble
+    set pins, 0b1     [28] ; Set pin high for the preamble
+    set pins, 0b0     [27] ; Set pin low for the preamble
     jmp y--, preamble
 
     ; Message start bit begins with a high half-wave
-    set pins, 0b11    [15] ; Delay to pad the start bit
+    set pins, 0b1     [15] ; Delay to pad the start bit
 
     ; Generate an idle packet (0x3FF00FF) in case the FIFO is empty
     mov x, ~NULL           ; Make x all 1s
@@ -46,13 +46,13 @@ bit_loop:
 mid_zero:
     ; Add the extra duration for a zero bit to the middle section
     nop               [28] ; Zero high part 2
-    set pins, 0b00    [28] ; Zero low part 1
+    set pins, 0b0     [28] ; Zero low part 1
 
 short_low:
-    set pins, 0b00    [28] ; Low half-wave
+    set pins, 0b0     [28] ; Low half-wave
 
 new_bit:
-    set pins, 0b11    [22] ; High half-wave (starting new bit)
+    set pins, 0b1     [22] ; High half-wave (starting new bit)
     jmp x--, bit_loop      ; Loop back for the next bit
     mov y, isr             ; Restore the bytes remaining counter from the ISR
 
@@ -61,8 +61,8 @@ byte_reset:
     jmp y--, byte_loop     ; Loop back for the next byte
 
     nop               [1]  ; Pad the packet end bit by 2 cycles
-    set pins, 0b00    [28] ; Second half of packet end bit
-    set pins, 0b11    [12] ; Start Railcom quarter-wave
+    set pins, 0b0     [28] ; Second half of packet end bit
+    set pins, 0b1     [12] ; Start Railcom quarter-wave
     irq next 4             ; Trigger the Railcom decoder
     wait 1 irq 5           ; Wait for the Railcom cutout to end
 
@@ -72,18 +72,16 @@ byte_reset:
 #include "hardware/clocks.h"
 
 static inline void wavegen_program_init(PIO pio, uint sm, uint offset,
-                                        uint signal_pin, uint pin_count) {
+                                        uint signal_pin) {
     pio_sm_config c = wavegen_program_get_default_config(offset);
-    sm_config_set_set_pins(&c, signal_pin, pin_count);
+    sm_config_set_set_pins(&c, signal_pin, 1);
     sm_config_set_in_shift(&c, false, false, 0);
     sm_config_set_out_shift(&c, false, true, 32);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
     sm_config_set_out_special(&c, true, false, 0);
 
-    for (uint i = 0; i < pin_count; i++) {
-        pio_gpio_init(pio, signal_pin + i);
-    }
-    pio_sm_set_consecutive_pindirs(pio, sm, signal_pin, pin_count, true);
+    pio_gpio_init(pio, signal_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, signal_pin, 1, true);
 
     float div = (float)clock_get_hz(clk_sys) / 500000.0f;
     sm_config_set_clkdiv(&c, div);

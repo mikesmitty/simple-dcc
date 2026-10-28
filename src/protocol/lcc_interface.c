@@ -225,7 +225,7 @@ static uint16_t config_write(lcc_node_t *node, uint32_t addr, uint16_t count,
         lcc_interface_get_pins_main(&sig, &pwr, &brk, &flt, &adc);
         wavegen_reinit(&wavegen,
                        enabled ? WAVEGEN_NORMAL : WAVEGEN_NO_CUTOUT,
-                       sig, 2, brk);
+                       sig, brk);
     }
     if (config_range_touches(addr, count, CONFIG_OFFSET_MAIN_LIMIT, 2)) {
         motor_set_current_limit_ma(&motor_a, lcc_interface_main_limit_ma());
