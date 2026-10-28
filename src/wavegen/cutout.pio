@@ -1,34 +1,39 @@
 ; simple-dcc RailCom Cutout Timer
 ; SPDX-License-Identifier: MIT
 
-; Manages the RailCom cutout window by applying/releasing the brake pin.
+; Manages the RailCom cutout window by applying/releasing the brake pin, and
+; tells the CPU where the RailCom channels fall so it can read the detector.
 ;
-; Each loop iteration is 1 cycle (2us @ 500kHz).
-; 216 counts * 2us = 432us loop duration.
+; Each cycle is 2us (500kHz). The brake is held for 222 cycles (444us).
 ; Measured: Tcs = 29us, Tce = 473.5us.
 ; This fits within the NMRA S-9.3.2 requirement of 26-32us Tcs, 454-488us Tce.
+;
+; Cycle counts below are from the brake going on (cycle 0). The CPU interrupt
+; flags (PIO1 IRQ 0-2) are:
+;   0  cutout start: the RailCom receiver drops anything read before it
+;   1  cycle 88 (176us, ~205us after the packet end bit): channel 1 has ended
+;      (RCN-217: by 177us) and no channel 2 byte (from 193us) is complete yet
+;   2  brake released: channel 2 has ended (by 454us)
 
 .program cutout
 
 .pio_version 1
 
-; Initialize default loop count. 216 = 0xD8 = (13 << 4) | 8
-    set x, 13
-    mov isr, x
-    set x, 8
-    in x, 4               ; ISR = (13 << 4) | 8 = 216
-    mov x, isr            ; X = 216 (Default loop count for pull noblock)
-
 .wrap_target
-    pull noblock           ; OSR = FIFO if not empty, else OSR = X
-    mov y, osr             ; Y = counter for loop
     wait 1 irq 4           ; Wait for Railcom start (PIO0 signals IRQ 4)
-    set pins, 1            ; Apply brake (T=26us)
-lp:
-    jmp y--, lp            ; 1 cycle per loop
-    irq prev 5             ; Signal wavegen on PIO0 to wake up
+    set pins, 1            ; Apply brake (T=26us)                 cycle 0
+    irq set 0              ; CPU: cutout start                    cycle 1
+    set y, 16              ;                                      cycle 2
+ch1:
+    jmp y--, ch1   [4]     ; 17 x 5 cycles                        cycles 3-87
+    irq set 1              ; CPU: channel 1 over                  cycle 88
+    set y, 31              ;                                      cycle 89
+ch2:
+    jmp y--, ch2   [3]     ; 32 x 4 cycles                        cycles 90-217
+    irq prev 5             ; Signal wavegen on PIO0 to wake up    cycle 218
     nop         [2]        ; Padding (3 cycles) to align with wavegen wrap
-    set pins, 0            ; Release brake
+    set pins, 0            ; Release brake                        cycle 222
+    irq set 2              ; CPU: cutout over
 .wrap
 
 % c-sdk {
@@ -38,10 +43,6 @@ static inline void cutout_program_init(PIO pio, uint sm, uint offset,
                                         uint brake_pin) {
     pio_sm_config c = cutout_program_get_default_config(offset);
     sm_config_set_set_pins(&c, brake_pin, 1);
-    sm_config_set_in_shift(&c, false, true, 32);
-    sm_config_set_out_shift(&c, false, false, 32);
-    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
-    sm_config_set_out_special(&c, true, false, 0);
 
     pio_gpio_init(pio, brake_pin);
     pio_sm_set_consecutive_pindirs(pio, sm, brake_pin, 1, true);

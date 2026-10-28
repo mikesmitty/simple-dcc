@@ -7,6 +7,10 @@
 ; Example: idle packet 0x3FF00FF = [len=3][0xFF][0x00][0xFF]
 ; Message start bit, byte separator bits, and packet end bit are added automatically.
 ; If the FIFO is empty, idle packets are sent until new data arrives.
+;
+; Output: the first word of each packet (idle ones included) is pushed to the RX
+; FIFO during its start bit, so the RailCom receiver knows which packet the next
+; cutout follows. The push never stalls; with nobody reading, the words are dropped.
 
 .program wavegen
 
@@ -21,11 +25,12 @@ preamble:
     jmp y--, preamble
 
     ; Message start bit begins with a high half-wave
-    set pins, 0b1     [15] ; Delay to pad the start bit
+    set pins, 0b1     [14] ; Delay to pad the start bit
 
-    ; Generate an idle packet (0x3FF00FF) in case the FIFO is empty
+    ; Generate an idle packet (0x3FF00FF) in case the FIFO is empty. The ISR is
+    ; already zero: every packet leaves it that way (its last byte_loop pass
+    ; copies y = 0 into it), and an SM restart clears it.
     mov x, ~NULL           ; Make x all 1s
-    in NULL, 6             ; Byte 1
     in x, 10               ; Byte 1-2
     in NULL, 8             ; Byte 3
     in x, 8                ; Byte 4
@@ -33,6 +38,8 @@ preamble:
 
     ; Pull the next encoded start packet from the FIFO
     pull noblock           ; Will receive idle packet from x if FIFO is empty
+    mov isr, osr           ; Report the packet's first word to the RailCom
+    push noblock           ; receiver through the RX FIFO
     out y, 8               ; Store the byte count of the message in y
     jmp byte_reset         ; Jump to the byte loop reset
 
@@ -77,7 +84,7 @@ static inline void wavegen_program_init(PIO pio, uint sm, uint offset,
     sm_config_set_set_pins(&c, signal_pin, 1);
     sm_config_set_in_shift(&c, false, false, 0);
     sm_config_set_out_shift(&c, false, true, 32);
-    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_NONE);  // RX carries packet words
     sm_config_set_out_special(&c, true, false, 0);
 
     pio_gpio_init(pio, signal_pin);

@@ -47,11 +47,12 @@ static bool init_wave_sm(wavegen_t *wg, wavegen_mode_t mode,
 }
 
 static bool init_cutout_sm(wavegen_t *wg, uint brake_pin) {
-    if (!pio_can_add_program(pio1, &cutout_program)) return false;
-    wg->cutout_offset = pio_add_program(pio1, &cutout_program);
-    wg->cutout_sm = pio_claim_unused_sm(pio1, true);
-    cutout_program_init(pio1, wg->cutout_sm, wg->cutout_offset, brake_pin);
-    wg->cutout_pio = pio1;
+    PIO pio = WAVEGEN_CUTOUT_PIO;
+    if (!pio_can_add_program(pio, &cutout_program)) return false;
+    wg->cutout_offset = pio_add_program(pio, &cutout_program);
+    wg->cutout_sm = pio_claim_unused_sm(pio, true);
+    cutout_program_init(pio, wg->cutout_sm, wg->cutout_offset, brake_pin);
+    wg->cutout_pio = pio;
     return true;
 }
 

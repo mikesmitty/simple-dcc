@@ -6,6 +6,10 @@
 #include "hardware/pio.h"
 #include "dcc/packet.h"
 
+// The cutout timer's PIO block. It also raises the CPU interrupts the RailCom
+// receiver runs on (see cutout.pio).
+#define WAVEGEN_CUTOUT_PIO  pio1
+
 typedef enum {
     WAVEGEN_NORMAL = 0,
     WAVEGEN_NO_CUTOUT,
