@@ -14,8 +14,10 @@ endif()
 # ====================================================================================
 cmake_minimum_required(VERSION 3.13)
 
-# Board and platform must be set before importing SDK
-set(PICO_BOARD pico2 CACHE STRING "Target board")
+# Board and platform must be set before importing SDK. pico-sdk 2.2.0 has no
+# Metro RP2350 header, so boards/ carries a copy of the upstream one.
+list(APPEND PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_LIST_DIR}/boards)
+set(PICO_BOARD adafruit_metro_rp2350 CACHE STRING "Target board")
 set(PICO_PLATFORM rp2350-arm-s CACHE STRING "Target platform")
 
 # Default to submodule paths; env vars override if set

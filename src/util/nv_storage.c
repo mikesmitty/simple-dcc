@@ -7,13 +7,16 @@
 #include "task.h"
 #include "util/dbg.h"
 
-// Use the last sector of flash for configuration.
-// PICO_FLASH_SIZE_BYTES is defined by the SDK based on the board.
-#ifndef PICO_FLASH_SIZE_BYTES
-#define PICO_FLASH_SIZE_BYTES (4 * 1024 * 1024)
+// Configuration lives in the last sector of the first 4 MB. That was the end
+// of flash under the old pico2 board config; pinning it keeps saved settings
+// now that the board config reports the Metro RP2350's full 16 MB.
+#define FLASH_CONFIG_OFFSET ((4 * 1024 * 1024) - FLASH_SECTOR_SIZE)
+
+#ifdef PICO_FLASH_SIZE_BYTES
+_Static_assert(FLASH_CONFIG_OFFSET + FLASH_SECTOR_SIZE <= PICO_FLASH_SIZE_BYTES,
+               "config sector is past the end of flash");
 #endif
 
-#define FLASH_CONFIG_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 #define FLASH_TARGET_CONTENTS ((const uint8_t *)(XIP_BASE + FLASH_CONFIG_OFFSET))
 
 bool nv_storage_init(void *buffer, size_t size) {

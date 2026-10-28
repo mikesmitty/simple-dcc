@@ -9,7 +9,7 @@ A simple LCC-connected DCC command station, because sometimes a tool just needs 
 
 ## Current Reference Hardware
 
-- **Board:** Adafruit Metro RP2350 (Raspberry Pi Pico 2)
+- **Board:** Adafruit Metro RP2350 (RP2350B, 16 MB flash)
 - **Motor Shield:** EX-MotorShield8874
 - **Protocol:** LCC/OpenLCB via GridConnect CAN frames over USB CDC
 
@@ -68,8 +68,8 @@ Output: `build/simple-dcc.uf2`
 
 ## Flash
 
-1. Hold BOOTSEL on the Pico 2 and connect USB
-2. Drag `simple-dcc.uf2` to the mounted `RPI-RP2` drive
+1. Hold BOOT on the Metro and connect USB
+2. Drag `simple-dcc.uf2` to the mounted `RP2350` drive
 
 Or use picotool:
 

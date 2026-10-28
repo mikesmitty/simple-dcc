@@ -4,20 +4,23 @@
 #include "pico/stdlib.h"
 
 // ---- EX-MotorShield8874 pin assignments ----
+// GPIO numbers for the shield's default jumpers on an Adafruit Metro RP2350.
+// The Metro's D12/D13 header positions are GPIO 22/23, and A0-A5 are
+// GPIO 41-46 (ADC channels 1-6).
 
 // Channel A (Main track)
-#define PIN_POWER_A         3
-#define PIN_SIGNAL_A        22
-#define PIN_BRAKE_A         9
-#define PIN_FAULT_A         4
-#define ADC_CHANNEL_A       1
+#define PIN_POWER_A         3   // D3
+#define PIN_SIGNAL_A        22  // D12
+#define PIN_BRAKE_A         9   // D9
+#define PIN_FAULT_A         45  // A4 (nFAULT)
+#define ADC_CHANNEL_A       1   // A0
 
 // Channel B (Prog track)
-#define PIN_POWER_B         11
-#define PIN_SIGNAL_B        23
-#define PIN_BRAKE_B         8
-#define PIN_FAULT_B         5
-#define ADC_CHANNEL_B       2
+#define PIN_POWER_B         11  // D11
+#define PIN_SIGNAL_B        23  // D13 (also the Metro's red LED)
+#define PIN_BRAKE_B         8   // D8
+#define PIN_FAULT_B         46  // A5 (nFAULT)
+#define ADC_CHANNEL_B       2   // A1
 
 // ---- Motor shield current sensing ----
 // mA per raw unit of the 12-bit ADC: mA = raw * SENSE_FACTOR_8874. From the

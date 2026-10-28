@@ -68,9 +68,11 @@ void motor_init(motor_t *m, char track_id,
     gpio_set_dir(fault_pin, GPIO_IN);
     gpio_pull_up(fault_pin);
 
-    // Init ADC
+    // Init ADC. Channel n is on GPIO ADC_BASE_PIN + n (40 + n on the
+    // RP2350B); the last channel is the temperature sensor, with no pin.
     adc_init();
-    adc_gpio_init(26 + adc_channel);
+    if (adc_channel < NUM_ADC_CHANNELS - 1)
+        adc_gpio_init(ADC_BASE_PIN + adc_channel);
 }
 
 void motor_set_current_limit_ma(motor_t *m, uint16_t ma) {

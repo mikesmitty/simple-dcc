@@ -1,6 +1,6 @@
 # simple-dcc
 
-C/FreeRTOS DCC command station for RP2350 (Pico 2) with LCC/OpenLCB over USB.
+C/FreeRTOS DCC command station for RP2350 (Adafruit Metro RP2350) with LCC/OpenLCB over USB.
 
 ## Build
 
@@ -24,7 +24,8 @@ cmake .. && make && ctest
 
 ## Architecture
 
-- **Target:** RP2350 (Pico 2), EX-MotorShield8874
+- **Target:** Adafruit Metro RP2350 (RP2350B: 48 GPIOs, ADC on GPIO 40-47), EX-MotorShield8874
+- **Board config:** `boards/adafruit_metro_rp2350.h` (copied from upstream pico-sdk; 2.2.0 lacks it). Changing `PICO_BOARD` needs `make clean` — the cached value wins otherwise.
 - **RTOS:** FreeRTOS (SMP dual-core, 7 priorities, Heap4)
 - **Protocol:** LCC/OpenLCB via GridConnect CAN frames over USB CDC
 - **LCC stack:** in-tree C implementation at `src/lcc/`
