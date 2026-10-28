@@ -98,7 +98,12 @@ static const lcc_snip_t  g_train_snip = {
 #define CONFIG_OFFSET_MCP_INT     153
 #define CONFIG_OFFSET_MCP_XTAL    154
 #define CONFIG_OFFSET_MCP_BAUD    155
+#define CONFIG_OFFSET_VERSION     156   // not in the CDI; drives one-shot migrations
 #define CONFIG_MEM_SIZE           0x0200
+
+// Bump when a saved field needs rewriting on load (see lcc_interface_load_config).
+//   1: fault pins moved from GPIO 4/5 to the shield's A4/A5 (GPIO 45/46)
+#define CONFIG_VERSION            1
 
 static uint8_t cs_config_mem[CONFIG_MEM_SIZE] __attribute__((aligned(256)));
 
@@ -138,6 +143,8 @@ static void config_mem_init_defaults(void) {
     cs_config_mem[CONFIG_OFFSET_MCP_INT]   = MCP2515_DEFAULT_INT;
     cs_config_mem[CONFIG_OFFSET_MCP_XTAL]  = MCP2515_DEFAULT_CRYSTAL;
     cs_config_mem[CONFIG_OFFSET_MCP_BAUD]  = MCP2515_DEFAULT_BITRATE;
+
+    cs_config_mem[CONFIG_OFFSET_VERSION]   = CONFIG_VERSION;
 }
 
 static void mark_config_dirty(void) {
@@ -461,6 +468,19 @@ void lcc_interface_load_config(void) {
             cs_config_mem[CONFIG_OFFSET_MCP_INT]   = MCP2515_DEFAULT_INT;
             cs_config_mem[CONFIG_OFFSET_MCP_XTAL]  = MCP2515_DEFAULT_CRYSTAL;
             cs_config_mem[CONFIG_OFFSET_MCP_BAUD]  = MCP2515_DEFAULT_BITRATE;
+            cs_config_dirty = true;
+        }
+
+        if (cs_config_mem[CONFIG_OFFSET_VERSION] < 1) {
+            /* Version 0 defaulted the fault pins to GPIO 4/5, which the
+             * EX-MotorShield8874 never drives. Move pins still on those
+             * defaults to its nFAULT outputs; leave custom pins alone. */
+            DBG("[NV] migrating config to version 1 (fault pins)\n");
+            if (cs_config_mem[CONFIG_OFFSET_PINS_MAIN+3] == 4)
+                cs_config_mem[CONFIG_OFFSET_PINS_MAIN+3] = PIN_FAULT_A;
+            if (cs_config_mem[CONFIG_OFFSET_PINS_PROG+3] == 5)
+                cs_config_mem[CONFIG_OFFSET_PINS_PROG+3] = PIN_FAULT_B;
+            cs_config_mem[CONFIG_OFFSET_VERSION] = 1;
             cs_config_dirty = true;
         }
     }

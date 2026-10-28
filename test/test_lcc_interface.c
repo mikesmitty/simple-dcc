@@ -351,6 +351,9 @@ static void test_config_migration(void) {
     assert(cs_config_mem[CONFIG_OFFSET_DISPLAY_SCL]  == DISPLAY_DEFAULT_SCL);
     assert(cs_config_mem[CONFIG_OFFSET_DISPLAY_ADDR] == DISPLAY_DEFAULT_I2C_ADDR);
     assert(cs_config_mem[CONFIG_OFFSET_DISPLAY_EN]   == 1);
+    assert(cs_config_mem[CONFIG_OFFSET_PINS_MAIN + 3] == PIN_FAULT_A);
+    assert(cs_config_mem[CONFIG_OFFSET_PINS_PROG + 3] == PIN_FAULT_B);
+    assert(cs_config_mem[CONFIG_OFFSET_VERSION] == CONFIG_VERSION);
 
     /* "Old" flash: auto-claim present but no limits/pins — migration
      * should overwrite with defaults. */
@@ -366,21 +369,58 @@ static void test_config_migration(void) {
     assert(cs_config_mem[CONFIG_OFFSET_PINS_MAIN] == PIN_SIGNAL_A);
 
     /* "Recent" flash: values already populated — migration leaves them
-     * alone and does NOT re-dirty. Includes MCP2515 SCK so the partial
-     * MCP migration doesn't fire. */
+     * alone and does NOT re-dirty. Includes MCP2515 SCK and the current
+     * version so neither migration fires; at the current version a fault
+     * pin of 4 is a deliberate choice and stays. */
     nv_initialized = true;
     memset(nv_data, 0, sizeof(nv_data));
     nv_data[CONFIG_OFFSET_RAILCOM] = 0;      /* non-default on purpose */
     nv_data[CONFIG_OFFSET_MAIN_LIMIT]     = (MAX_CURRENT_MAIN_MA >> 8) & 0xFF;
     nv_data[CONFIG_OFFSET_MAIN_LIMIT + 1] = MAX_CURRENT_MAIN_MA & 0xFF;
     nv_data[CONFIG_OFFSET_PINS_MAIN]      = PIN_SIGNAL_A;
+    nv_data[CONFIG_OFFSET_PINS_MAIN + 3]  = 4;
     nv_data[CONFIG_OFFSET_DISPLAY_ADDR]   = DISPLAY_DEFAULT_I2C_ADDR;
     nv_data[CONFIG_OFFSET_MCP_SCK]        = MCP2515_DEFAULT_SCK;
+    nv_data[CONFIG_OFFSET_VERSION]        = CONFIG_VERSION;
     cs_config_dirty = false;
 
     lcc_interface_load_config();
     assert(cs_config_dirty == false);
     assert(cs_config_mem[CONFIG_OFFSET_RAILCOM] == 0);
+    assert(cs_config_mem[CONFIG_OFFSET_PINS_MAIN + 3] == 4);
+
+    /* Version 0 flash with the old GPIO 4/5 fault defaults: the version 1
+     * migration moves them to the shield's A4/A5 pins, keeps other user
+     * values, and dirties the config so the new version is written back. */
+    nv_initialized = true;
+    memset(nv_data, 0, sizeof(nv_data));
+    nv_data[CONFIG_OFFSET_RAILCOM]        = 0;
+    nv_data[CONFIG_OFFSET_MAIN_LIMIT]     = (MAX_CURRENT_MAIN_MA >> 8) & 0xFF;
+    nv_data[CONFIG_OFFSET_MAIN_LIMIT + 1] = MAX_CURRENT_MAIN_MA & 0xFF;
+    nv_data[CONFIG_OFFSET_PINS_MAIN]      = PIN_SIGNAL_A;
+    nv_data[CONFIG_OFFSET_PINS_MAIN + 3]  = 4;
+    nv_data[CONFIG_OFFSET_PINS_PROG + 3]  = 5;
+    nv_data[CONFIG_OFFSET_DISPLAY_ADDR]   = DISPLAY_DEFAULT_I2C_ADDR;
+    nv_data[CONFIG_OFFSET_MCP_SCK]        = MCP2515_DEFAULT_SCK;
+    cs_config_dirty = false;
+
+    lcc_interface_load_config();
+    assert(cs_config_dirty == true);
+    assert(cs_config_mem[CONFIG_OFFSET_RAILCOM] == 0);  /* user value preserved */
+    assert(cs_config_mem[CONFIG_OFFSET_PINS_MAIN + 3] == PIN_FAULT_A);
+    assert(cs_config_mem[CONFIG_OFFSET_PINS_PROG + 3] == PIN_FAULT_B);
+    assert(cs_config_mem[CONFIG_OFFSET_VERSION] == CONFIG_VERSION);
+
+    /* Version 0 flash with custom fault pins: only the version moves. */
+    nv_data[CONFIG_OFFSET_PINS_MAIN + 3]  = 7;
+    nv_data[CONFIG_OFFSET_PINS_PROG + 3]  = 6;
+    cs_config_dirty = false;
+
+    lcc_interface_load_config();
+    assert(cs_config_dirty == true);
+    assert(cs_config_mem[CONFIG_OFFSET_PINS_MAIN + 3] == 7);
+    assert(cs_config_mem[CONFIG_OFFSET_PINS_PROG + 3] == 6);
+    assert(cs_config_mem[CONFIG_OFFSET_VERSION] == CONFIG_VERSION);
 
     /* Pre-MCP flash (v0.4.0 and earlier): MCP_SCK == 0 triggers the
      * partial MCP-only migration — other user values preserved, but
