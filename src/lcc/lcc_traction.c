@@ -30,18 +30,21 @@ void lcc_train_state_init(lcc_train_state_t *state,
  *
  * Direct addressing (what JMRI's ops-mode programmer uses):
  *   0x00000000..0x000003FF  CV 1..1024 at address CV - 1. A write sends
- *                           the POM packet; reads need RailCom (Phase 3).
+ *                           the POM packet; a read is a POM read over
+ *                           RailCom, answered once the decoder replies.
  *
  * Indirect offsets (OpenMRN's CDI "CV access" form, TractionCvSpace.hxx):
  *   0x7F000000  4 bytes  CV index, 1-based, big-endian (writable, readable)
  *   0x7F000004  1 byte   CV value (write triggers POM write with latched CV;
- *                                  read triggers RailCom fetch — Phase 3)
- *   0x7F000005  1 byte   CV verify value (Phase 3)
- *   0x7F000006  1 byte   CV verify result (Phase 3)
+ *                                  read is a POM read of it)
+ *   0x7F000005  1 byte   CV verify value (not implemented)
+ *   0x7F000006  1 byte   CV verify result (not implemented)
  *
  * All callbacks run on the LCC task with `node->train` pointing at the
  * train whose space was addressed — mem-config's per-node dispatch is
- * what routes 0xF8 to the right decoder without a global CV-owner.
+ * what routes 0xF8 to the right decoder without a global CV-owner. CV
+ * reads go through mem-config's deferred path: cv_space_read passes them
+ * on, and cv_space_defer starts the POM read.
  */
 
 enum {
@@ -74,9 +77,23 @@ static uint16_t cv_space_read(lcc_node_t *node, uint32_t addr,
         return count;
     }
 
-    /* Reading a CV on the main needs RailCom (Phase 3), as do the verify
-     * registers. JMRI shows this error as "not implemented". */
-    if (addr < CV_DIRECT_COUNT || addr >= CV_OFFSET_VALUE) {
+    /* A CV read is a POM read, answered later. Without the hook (no
+     * RailCom), and for the verify registers, it fails with "not
+     * implemented", which JMRI shows as such. */
+    if (addr < CV_DIRECT_COUNT || addr == CV_OFFSET_VALUE) {
+        if (!g_hooks.pom_read_byte) {
+            *error = LCC_ERR_UNIMPLEMENTED_CMD;
+            return 0;
+        }
+        uint16_t cv = node->train->pom_cv_index;
+        if (addr == CV_OFFSET_VALUE && (cv == 0 || cv > CV_DIRECT_COUNT)) {
+            *error = LCC_ERR_INVALID_ARGUMENTS;
+            return 0;
+        }
+        *error = LCC_MEMCFG_DEFER;
+        return 0;
+    }
+    if (addr > CV_OFFSET_VALUE) {
         *error = LCC_ERR_UNIMPLEMENTED_CMD;
         return 0;
     }
@@ -152,6 +169,20 @@ static uint16_t cv_space_write(lcc_node_t *node, uint32_t addr,
     return 0;
 }
 
+/* Reads cv_space_read passed on: a direct CV, or CV_VALUE with a valid
+ * latched CV (checked there). */
+static uint16_t cv_space_defer(lcc_node_t *node,
+                               const lcc_memconfig_deferred_t *req)
+{
+    if (!node->train || req->is_write || !g_hooks.pom_read_byte)
+        return LCC_ERR_PERMANENT;
+    uint16_t cv = req->addr < CV_DIRECT_COUNT
+                ? (uint16_t)(req->addr + 1)
+                : node->train->pom_cv_index;
+    return g_hooks.pom_read_byte(node->train->dcc_address,
+                                 node->train->is_long_address, cv);
+}
+
 static const lcc_memspace_handler_t g_cv_space_handler[] = {
     {
         .space           = 0xF8,
@@ -160,6 +191,7 @@ static const lcc_memspace_handler_t g_cv_space_handler[] = {
         .read            = cv_space_read,
         .write           = cv_space_write,
         .update_complete = NULL,
+        .defer           = cv_space_defer,
     },
 };
 

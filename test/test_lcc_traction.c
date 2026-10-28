@@ -933,8 +933,8 @@ static void test_cv_space_reads_fail_without_railcom(void) {
     init_node_with_train(&n, &t, 42, false, 0xABC);
     lcc_traction_register_cv_space(&n);
 
-    /* Reading a CV on the main needs RailCom; until then it fails with
-     * "not implemented", which JMRI shows as such. */
+    /* Without the POM read hook (no RailCom), reading a CV on the main
+     * fails with "not implemented", which JMRI shows as such. */
     assert_cv_read_fails(&n, 28, LCC_ERR_UNIMPLEMENTED_CMD);        /* CV 29 */
     assert_cv_read_fails(&n, 1023, LCC_ERR_UNIMPLEMENTED_CMD);      /* CV 1024 */
     assert_cv_read_fails(&n, 0x7F000004u, LCC_ERR_UNIMPLEMENTED_CMD);
@@ -955,7 +955,135 @@ static void test_cv_space_reads_fail_without_railcom(void) {
     assert(last_datagram.len == sizeof(want));
     assert(memcmp(last_datagram.data, want, sizeof(want)) == 0);
 
-    printf("  PASS: CV space reads fail with an error until RailCom\n");
+    printf("  PASS: CV space reads fail with an error without RailCom\n");
+}
+
+/* POM read hook: records the call and returns pom_read_return. */
+static struct {
+    uint16_t addr;
+    bool     is_long;
+    uint16_t cv;
+    int      calls;
+} last_pom_read;
+static uint16_t pom_read_return;
+
+static uint16_t mock_pom_read_byte(uint16_t addr, bool is_long, uint16_t cv) {
+    last_pom_read.addr = addr;
+    last_pom_read.is_long = is_long;
+    last_pom_read.cv = cv;
+    last_pom_read.calls++;
+    return pom_read_return;
+}
+
+static void enable_pom_reads(void) {
+    lcc_traction_hooks_t hooks = {
+        .set_throttle   = mock_set_throttle,
+        .set_function   = mock_set_function,
+        .emergency_stop = mock_emergency_stop,
+        .pom_write_byte = mock_pom_write_byte,
+        .pom_read_byte  = mock_pom_read_byte,
+    };
+    lcc_traction_set_hooks(&hooks);
+    memset(&last_pom_read, 0, sizeof(last_pom_read));
+    pom_read_return = 0;
+}
+
+/* Start a 1-byte read of `addr`: it must reach the hook and leave the
+ * reply owed. */
+static void start_cv_read(lcc_node_t *n, uint32_t addr) {
+    uint8_t pkt[16];
+    uint8_t len = mc_read(pkt, addr, 1);
+    last_datagram.calls = 0;
+    lcc_memconfig_handle(n, 0x123, pkt, len);
+    assert(last_datagram.calls == 0);
+    assert(lcc_memconfig_deferred_pending());
+}
+
+static void test_cv_space_read_is_a_pom_read(void) {
+    reset_all();
+    enable_pom_reads();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 3000, true, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    /* Direct address 28 = CV 29. */
+    start_cv_read(&n, 28);
+    assert(last_pom_read.calls == 1);
+    assert(last_pom_read.addr == 3000);
+    assert(last_pom_read.is_long);
+    assert(last_pom_read.cv == 29);
+
+    /* The CV index register still reads at once meanwhile. */
+    t.pom_cv_index = 7;
+    uint8_t pkt[16];
+    uint8_t len = mc_read(pkt, 0x7F000000u, 4);
+    lcc_memconfig_handle(&n, 0x123, pkt, len);
+    assert(last_datagram.calls == 1);
+    assert(last_datagram.data[1] == 0x50);
+    assert(last_datagram.data[10] == 7);
+
+    /* The decoder answers 0x26. */
+    uint8_t value = 0x26;
+    last_datagram.calls = 0;
+    lcc_memconfig_complete(0, &value, 1);
+    lcc_memconfig_flush_deferred();
+    const uint8_t want[] = { 0x20, 0x50, 0, 0, 0, 28, 0xF8, 0x26 };
+    assert(last_datagram.calls == 1);
+    assert(last_datagram.len == sizeof(want));
+    assert(memcmp(last_datagram.data, want, sizeof(want)) == 0);
+    assert(!lcc_memconfig_deferred_pending());
+
+    printf("  PASS: CV space read starts a POM read\n");
+}
+
+static void test_cv_space_value_read(void) {
+    reset_all();
+    enable_pom_reads();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 42, false, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    /* Without a latched CV the read fails at once. */
+    assert_cv_read_fails(&n, 0x7F000004u, LCC_ERR_INVALID_ARGUMENTS);
+    assert(last_pom_read.calls == 0);
+
+    t.pom_cv_index = 1024;
+    start_cv_read(&n, 0x7F000004u);
+    assert(last_pom_read.calls == 1);
+    assert(last_pom_read.addr == 42 && !last_pom_read.is_long);
+    assert(last_pom_read.cv == 1024);
+
+    /* No answer from the decoder. */
+    last_datagram.calls = 0;
+    lcc_memconfig_complete(LCC_ERR_DCC_NO_LOCO, NULL, 0);
+    lcc_memconfig_flush_deferred();
+    assert(last_datagram.calls == 1);
+    assert(last_datagram.data[1] == 0x58);
+    assert(last_datagram.data[7] == (uint8_t)(LCC_ERR_DCC_NO_LOCO >> 8));
+    assert(last_datagram.data[8] == (uint8_t)LCC_ERR_DCC_NO_LOCO);
+
+    /* The verify registers still aren't implemented. */
+    assert_cv_read_fails(&n, 0x7F000005u, LCC_ERR_UNIMPLEMENTED_CMD);
+    assert_cv_read_fails(&n, 0x7F000006u, LCC_ERR_UNIMPLEMENTED_CMD);
+    assert(last_pom_read.calls == 1);
+
+    printf("  PASS: CV space value register read\n");
+}
+
+static void test_cv_space_read_refused_by_host(void) {
+    reset_all();
+    enable_pom_reads();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 42, false, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    /* e.g. the RailCom cutout is off. */
+    pom_read_return = LCC_ERR_UNIMPLEMENTED_CMD;
+    assert_cv_read_fails(&n, 0, LCC_ERR_UNIMPLEMENTED_CMD);
+    assert(last_pom_read.calls == 1);
+    assert(!lcc_memconfig_deferred_pending());
+
+    printf("  PASS: CV space read refused by the host fails at once\n");
 }
 
 static void test_cv_space_get_space_info(void) {
@@ -1012,6 +1140,9 @@ int main(void) {
     test_cv_space_unwritable_addresses_fail();
     test_cv_space_multi_byte_direct_write();
     test_cv_space_reads_fail_without_railcom();
+    test_cv_space_read_is_a_pom_read();
+    test_cv_space_value_read();
+    test_cv_space_read_refused_by_host();
     printf("All LCC traction tests passed.\n");
     return 0;
 }

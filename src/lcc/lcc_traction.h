@@ -63,6 +63,11 @@ typedef struct {
      * hosts that don't own a DCC engine; writes are then no-ops. */
     void (*pom_write_byte)(uint16_t addr, bool is_long,
                            uint16_t cv, uint8_t value);
+    /* POM read (over RailCom) for the traction CV space. Return 0 once the
+     * read has started; the host then reports the value or an error with
+     * lcc_memconfig_complete(). Any other return value is the OpenLCB
+     * error to answer with. NULL: CV reads on the main are unsupported. */
+    uint16_t (*pom_read_byte)(uint16_t addr, bool is_long, uint16_t cv);
 } lcc_traction_hooks_t;
 
 /* Wire DCC engine callbacks. Pass NULL to detach (e.g. for host tests). */
