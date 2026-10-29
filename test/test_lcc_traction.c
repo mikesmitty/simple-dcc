@@ -388,7 +388,7 @@ static void test_emergency_stop(void) {
     lcc_traction_handle_frame(&n, &f);
     assert(last_reply.payload[0] == LCC_TRAC_QUERY_SPEEDS);
     assert(last_reply.payload[1] == 0x80 && last_reply.payload[2] == 0x00);
-    assert(last_reply.payload[3] & 0x80);
+    assert(last_reply.payload[3] == LCC_TRAC_SPEED_STATUS_ESTOP);
 
     /* A new speed clears it. */
     f = make_tc_frame(0x123, 0x456, set_cmd, sizeof(set_cmd));
@@ -416,11 +416,11 @@ static void test_global_estop_status(void) {
     lcc_traction_handle_frame(&n, &f);
     assert(last_reply.payload[1] == (uint8_t)(v >> 8));
     assert(last_reply.payload[2] == (uint8_t)v);
-    assert(last_reply.payload[3] & 0x80);
+    assert(last_reply.payload[3] == LCC_TRAC_SPEED_STATUS_ESTOP);
 
     mock_estop_held = false;
     lcc_traction_handle_frame(&n, &f);
-    assert((last_reply.payload[3] & 0x80) == 0);
+    assert(last_reply.payload[3] == 0);
 
     printf("  PASS: global e-stop status\n");
 }
@@ -450,8 +450,8 @@ static void test_query_speeds_reply(void) {
     /* set_f16 echoes back verbatim at bytes 1..2. */
     assert(last_reply.payload[1] == (uint8_t)(v >> 8));
     assert(last_reply.payload[2] == (uint8_t)v);
-    /* status bit 0x80 clear — not in emergency. */
-    assert((last_reply.payload[3] & 0x80) == 0);
+    /* status E-Stop bit clear — not in emergency. */
+    assert(last_reply.payload[3] == 0);
 
     printf("  PASS: query_speeds reply\n");
 }

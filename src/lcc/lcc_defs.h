@@ -93,6 +93,10 @@
  * the slave applies it but does not re-forward to its own consist. */
 #define LCC_TRAC_REQ_LISTENER     0x80
 
+/* Query Speeds reply status byte: bit 0 is E-Stop (Train Control Standard,
+ * OpenMRN SPEEDRESP_STATUS_IS_ESTOP). */
+#define LCC_TRAC_SPEED_STATUS_ESTOP 0x01
+
 /* Traction Controller Config sub-opcodes (payload byte 1 after 0x20).
  * Reference: OpenMRN TractionDefs.hxx CTRLREQ_*. */
 #define LCC_CTRLREQ_ASSIGN              0x01  /* + flags + 6-byte node ID (+ 2-byte alias if flag 0x01) */

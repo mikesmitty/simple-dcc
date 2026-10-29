@@ -304,12 +304,12 @@ static void on_query_speeds(lcc_node_t *node, uint16_t reply_to)
 {
     /* Reply payload: 0x10 | set_f16 | status | commanded_f16 | actual_f16.
      * No feedback path yet — echo the last setpoint for all three speeds.
-     * Status bit 0x80 = estop in effect: this train's, or a held global
-     * one, which leaves Set Speed alone. */
+     * The status E-Stop bit means an estop is in effect: this train's, or a
+     * held global one, which leaves Set Speed alone. */
     lcc_float16_t v = node->train->last_speed_f16;
     bool estop = node->train->emergency ||
                  (g_hooks.global_estop_held && g_hooks.global_estop_held());
-    uint8_t status  = estop ? 0x80 : 0x00;
+    uint8_t status  = estop ? LCC_TRAC_SPEED_STATUS_ESTOP : 0x00;
     uint8_t reply[8] = {
         LCC_TRAC_QUERY_SPEEDS,
         (uint8_t)(v >> 8), (uint8_t)v,
