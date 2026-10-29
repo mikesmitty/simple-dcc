@@ -384,6 +384,63 @@ static void test_long_consist_address(void) {
     printf("  PASS: Consist Address short form\n");
 }
 
+static void test_basic_accessory(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // User address 1 is binary 4: decoder 1, output pair 0. Its well-known
+    // events are 01.01.02.00.00.FF.00.09 (normal) and .08 (reversed).
+    packet_build_basic_accessory(pkt, 4, true, true, 3);
+    const uint8_t normal_on[] = { 0x81, 0xF9 };
+    assert(pkt_is(pkt, normal_on, sizeof(normal_on)));
+    assert(pkt->priority == PRIORITY_HIGH);
+    assert(pkt->repeats == 3);
+
+    packet_build_basic_accessory(pkt, 4, false, true, 3);
+    const uint8_t reversed_on[] = { 0x81, 0xF8 };
+    assert(pkt_is(pkt, reversed_on, sizeof(reversed_on)));
+
+    packet_build_basic_accessory(pkt, 4, true, false, 3);
+    const uint8_t normal_off[] = { 0x81, 0xF1 };
+    assert(pkt_is(pkt, normal_off, sizeof(normal_off)));
+
+    // Output pair 3 of decoder 1.
+    packet_build_basic_accessory(pkt, 7, true, true, 3);
+    const uint8_t pair3[] = { 0x81, 0xFF };
+    assert(pkt_is(pkt, pair3, sizeof(pair3)));
+
+    // Decoder 64: address bits 8-10 are 001, sent as 110.
+    packet_build_basic_accessory(pkt, 256, true, true, 3);
+    const uint8_t dec64[] = { 0x80, 0xE9 };
+    assert(pkt_is(pkt, dec64, sizeof(dec64)));
+
+    // The highest output, binary 2047.
+    packet_build_basic_accessory(pkt, 2047, true, true, 3);
+    const uint8_t top[] = { 0xBF, 0x8F };
+    assert(pkt_is(pkt, top, sizeof(top)));
+
+    packet_free(pkt);
+    printf("  PASS: basic accessory\n");
+}
+
+static void test_extended_accessory(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    packet_build_extended_accessory(pkt, 4, 5, 3);
+    const uint8_t aspect5[] = { 0x81, 0x71, 0x05 };
+    assert(pkt_is(pkt, aspect5, sizeof(aspect5)));
+    assert(pkt->priority == PRIORITY_HIGH);
+    assert(pkt->repeats == 3);
+
+    packet_build_extended_accessory(pkt, 2047, 0, 3);
+    const uint8_t top[] = { 0xBF, 0x07, 0x00 };
+    assert(pkt_is(pkt, top, sizeof(top)));
+
+    packet_free(pkt);
+    printf("  PASS: extended accessory\n");
+}
+
 int main(void) {
     printf("test_packet:\n");
     test_idle_packet_encode();
@@ -400,6 +457,8 @@ int main(void) {
     test_long_address_instruction();
     test_consist_control();
     test_long_consist_address();
+    test_basic_accessory();
+    test_extended_accessory();
     test_svc_write_byte_layout();
     test_svc_verify_byte_layout();
     test_svc_high_cv();

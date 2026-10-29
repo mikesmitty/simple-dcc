@@ -93,6 +93,25 @@ void           packet_build_long_consist_address(dcc_packet_t *pkt,
                                                  uint8_t cv19, uint8_t cv20,
                                                  int8_t repeats);
 
+// Build a basic accessory packet (S-9.2.1 2.4.1):
+//     10AAAAAA  1AAACDDR
+// `addr` is the 11-bit binary output address: the decoder address in bits
+// 2-10 (the packet carries bits 8-10 in ones' complement) and the output
+// pair DD in bits 0-1. R is 1 for normal (closed), 0 for reversed
+// (thrown); C is 1 to activate the output, 0 to deactivate it. Sets
+// PRIORITY_HIGH and the caller-supplied repeat count.
+void           packet_build_basic_accessory(dcc_packet_t *pkt, uint16_t addr,
+                                            bool normal, bool activate,
+                                            int8_t repeats);
+
+// Build an extended accessory packet (S-9.2.1 2.4.2), which sends a signal
+// decoder its aspect:
+//     10AAAAAA  0AAA0AA1  DDDDDDDD
+// Same 11-bit `addr` and priority as packet_build_basic_accessory.
+void           packet_build_extended_accessory(dcc_packet_t *pkt,
+                                               uint16_t addr, uint8_t aspect,
+                                               int8_t repeats);
+
 // Build an NMRA S-9.2.3 Direct Byte Service Mode packet. Service Mode
 // packets have no address byte — they are broadcast on the isolated
 // programming track. Wire layout:

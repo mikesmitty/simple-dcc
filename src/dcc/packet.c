@@ -196,6 +196,32 @@ void packet_build_long_consist_address(dcc_packet_t *pkt,
     packet_build_short_form(pkt, 0xF6, address, is_long, cv19, cv20, repeats);
 }
 
+// The two address bytes both accessory packets start with. `b2` is the
+// second byte's fixed bits: 0x80 for basic, 0x01 for extended.
+static void packet_start_accessory(dcc_packet_t *pkt, uint16_t addr,
+                                   uint8_t b2, int8_t repeats) {
+    packet_reset(pkt);
+    packet_add_byte(pkt, 0x80 | (uint8_t)((addr >> 2) & 0x3F));
+    packet_add_byte(pkt, b2 | (uint8_t)(((uint16_t)~addr >> 4) & 0x70)
+                            | (uint8_t)((addr & 0x03) << 1));
+    pkt->address  = addr;
+    pkt->priority = PRIORITY_HIGH;
+    pkt->repeats  = repeats;
+}
+
+void packet_build_basic_accessory(dcc_packet_t *pkt, uint16_t addr,
+                                  bool normal, bool activate, int8_t repeats) {
+    packet_start_accessory(pkt, addr,
+                           0x80 | (activate ? 0x08 : 0) | (normal ? 0x01 : 0),
+                           repeats);
+}
+
+void packet_build_extended_accessory(dcc_packet_t *pkt, uint16_t addr,
+                                     uint8_t aspect, int8_t repeats) {
+    packet_start_accessory(pkt, addr, 0x01, repeats);
+    packet_add_byte(pkt, aspect);
+}
+
 static void packet_build_svc_direct(dcc_packet_t *pkt, uint8_t opcode,
                                     uint16_t cv, uint8_t value) {
     packet_reset(pkt);

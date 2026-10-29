@@ -13,11 +13,22 @@ typedef struct {
     bool                   used;
 } lcc_event_reg_t;
 
-static lcc_event_reg_t g_table[LCC_MAX_EVENT_REGISTRATIONS];
+typedef struct {
+    lcc_node_t            *node;
+    uint64_t               base;
+    uint64_t               mask;    /* the low mask_bits bits */
+    lcc_event_on_report_fn on_report;
+    lcc_event_state_fn     state;
+    bool                   used;
+} lcc_event_range_t;
+
+static lcc_event_reg_t   g_table[LCC_MAX_EVENT_REGISTRATIONS];
+static lcc_event_range_t g_ranges[LCC_MAX_EVENT_RANGES];
 
 void lcc_events_reset(void)
 {
     memset(g_table, 0, sizeof(g_table));
+    memset(g_ranges, 0, sizeof(g_ranges));
 }
 
 bool lcc_events_register(lcc_node_t *node,
@@ -40,6 +51,46 @@ bool lcc_events_register(lcc_node_t *node,
     return false;
 }
 
+bool lcc_events_register_consumer_range(lcc_node_t *node,
+                                        uint64_t base,
+                                        uint8_t mask_bits,
+                                        lcc_event_on_report_fn on_report,
+                                        lcc_event_state_fn state)
+{
+    for (int i = 0; i < LCC_MAX_EVENT_RANGES; i++) {
+        if (!g_ranges[i].used) {
+            g_ranges[i].node      = node;
+            g_ranges[i].base      = base;
+            g_ranges[i].mask      = (1ULL << mask_bits) - 1;
+            g_ranges[i].on_report = on_report;
+            g_ranges[i].state     = state;
+            g_ranges[i].used      = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* The node's range holding `event_id`, or NULL. */
+static const lcc_event_range_t *find_range(const lcc_node_t *node,
+                                           uint64_t event_id)
+{
+    for (int i = 0; i < LCC_MAX_EVENT_RANGES; i++) {
+        const lcc_event_range_t *r = &g_ranges[i];
+        if (r->used && r->node == node && (event_id & ~r->mask) == r->base)
+            return r;
+    }
+    return NULL;
+}
+
+/* The event ID a Range Identified carries: the range's low bits all 1s,
+ * or all 0s when the bit above them is 1, so the run of equal low bits
+ * gives the size. */
+static uint64_t range_event(const lcc_event_range_t *r)
+{
+    return (r->base & (r->mask + 1)) ? r->base : (r->base | r->mask);
+}
+
 static void send_global_event(const lcc_node_t *node, uint16_t mti,
                               uint64_t event_id)
 {
@@ -55,12 +106,13 @@ void lcc_events_send_report(const lcc_node_t *node, uint64_t event_id)
 
 /* ---- identify handlers ------------------------------------------------ */
 
-/* Send the registration's Producer or Consumer Identified (`role`),
- * carrying its state: Unknown unless it registered a state callback. */
-static void send_identified(const lcc_event_reg_t *r, uint8_t role)
+/* Send the event's Producer or Consumer Identified (`role`), carrying
+ * its state: Unknown unless its registration has a state callback. */
+static void send_identified(const lcc_node_t *node, uint64_t event_id,
+                            lcc_event_state_fn state, uint8_t role)
 {
-    lcc_event_state_t st = r->state ? r->state(r->node, r->event_id)
-                                    : LCC_EVENT_STATE_UNKNOWN;
+    lcc_event_state_t st = state ? state(node, event_id)
+                                 : LCC_EVENT_STATE_UNKNOWN;
     bool producer = role == LCC_EVENT_PRODUCER;
     uint16_t mti;
     switch (st) {
@@ -77,7 +129,7 @@ static void send_identified(const lcc_event_reg_t *r, uint8_t role)
                        : LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN;
         break;
     }
-    send_global_event(r->node, mti, r->event_id);
+    send_global_event(node, mti, event_id);
 }
 
 /* Every train node produces Is Train. It has no table entry, since a
@@ -96,12 +148,18 @@ static void emit_identities_for_node(const lcc_node_t *node)
     /* For each registration belonging to this node, emit the matching
      * Producer/Consumer Identified frame. */
     for (int i = 0; i < LCC_MAX_EVENT_REGISTRATIONS; i++) {
-        if (!g_table[i].used || g_table[i].node != node)
+        const lcc_event_reg_t *r = &g_table[i];
+        if (!r->used || r->node != node)
             continue;
-        if (g_table[i].flags & LCC_EVENT_PRODUCER)
-            send_identified(&g_table[i], LCC_EVENT_PRODUCER);
-        if (g_table[i].flags & LCC_EVENT_CONSUMER)
-            send_identified(&g_table[i], LCC_EVENT_CONSUMER);
+        if (r->flags & LCC_EVENT_PRODUCER)
+            send_identified(node, r->event_id, r->state, LCC_EVENT_PRODUCER);
+        if (r->flags & LCC_EVENT_CONSUMER)
+            send_identified(node, r->event_id, r->state, LCC_EVENT_CONSUMER);
+    }
+    for (int i = 0; i < LCC_MAX_EVENT_RANGES; i++) {
+        if (g_ranges[i].used && g_ranges[i].node == node)
+            send_global_event(node, LCC_MTI_CONSUMER_IDENTIFIED_RANGE,
+                              range_event(&g_ranges[i]));
     }
 }
 
@@ -125,8 +183,13 @@ static void handle_single_identify(const lcc_node_t *node,
             continue;
         if (g_table[i].event_id != event_id)
             continue;
-        send_identified(&g_table[i], role);
+        send_identified(node, event_id, g_table[i].state, role);
         return;
+    }
+    if (role == LCC_EVENT_CONSUMER) {
+        const lcc_event_range_t *r = find_range(node, event_id);
+        if (r)
+            send_identified(node, event_id, r->state, role);
     }
 }
 
@@ -169,6 +232,9 @@ void lcc_events_handle_frame(lcc_node_t *node, const lcc_frame_t *frame)
             if (g_table[i].on_report)
                 g_table[i].on_report(node, ev);
         }
+        const lcc_event_range_t *r = find_range(node, ev);
+        if (r && r->on_report)
+            r->on_report(node, ev);
         return;
     }
 }

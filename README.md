@@ -8,6 +8,7 @@ A simple LCC-connected DCC command station, because sometimes a tool just needs 
 - RailCom cutout support
 - CV writes on the main, including a long address in one step (CV17 and CV18) and advanced consists (CV19)
 - CV reads on the main over RailCom, with the detector shield in `hardware/railcom-detector`
+- DCC accessory decoders (turnouts and signal aspects) through the well-known LCC accessory events
 
 ## Current Reference Hardware
 

@@ -319,6 +319,21 @@ void dcc_pom_write_long_consist(dcc_engine_t *dcc, uint16_t address,
     send_packet(dcc, pkt);
 }
 
+void dcc_basic_accessory(dcc_engine_t *dcc, uint16_t addr, bool normal,
+                         bool activate) {
+    dcc_packet_t *pkt = packet_alloc();
+    if (!pkt) return;
+    packet_build_basic_accessory(pkt, addr, normal, activate, 3);
+    send_packet(dcc, pkt);
+}
+
+void dcc_extended_accessory(dcc_engine_t *dcc, uint16_t addr, uint8_t aspect) {
+    dcc_packet_t *pkt = packet_alloc();
+    if (!pkt) return;
+    packet_build_extended_accessory(pkt, addr, aspect, 3);
+    send_packet(dcc, pkt);
+}
+
 void dcc_pom_read_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,
                        uint16_t cv, int8_t repeats) {
     dcc_packet_t *pkt = packet_alloc();

@@ -10,6 +10,7 @@
 #include "lcc/lcc_defs.h"
 #include "lcc/lcc_memconfig.h"
 #include "lcc/lcc_events.h"
+#include "lcc/lcc_accessory.h"
 #include "lcc/lcc_traction.h"
 #include "lcc/lcc_train_search.h"
 #include "mcp2515/mcp2515_lcc.h"
@@ -718,6 +719,20 @@ static void lcc_interface_maybe_start_mcp2515(void) {
     }
 }
 
+// --- Accessory hooks ---------------------------------------------------
+
+static void accessory_basic(uint16_t addr, bool normal, bool activate) {
+    if (g_dcc_engine) dcc_basic_accessory(g_dcc_engine, addr, normal, activate);
+}
+static void accessory_extended(uint16_t addr, uint8_t aspect) {
+    if (g_dcc_engine) dcc_extended_accessory(g_dcc_engine, addr, aspect);
+}
+
+static const lcc_accessory_hooks_t g_accessory_hooks = {
+    .basic    = accessory_basic,
+    .extended = accessory_extended,
+};
+
 // --- Emergency event handling -----------------------------------------
 
 static void handle_emergency_event(lcc_node_t *node, uint64_t event_id) {
@@ -844,6 +859,10 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
     lcc_events_register(&g_cs_node, LCC_EVENT_CLEAR_EMERG_STOP,
                         LCC_EVENT_CONSUMER, handle_emergency_event,
                         estop_event_state);
+
+    /* DCC accessory decoders: the CS node consumes the well-known
+     * accessory events and sends their packets. */
+    lcc_accessory_init(&g_cs_node, &g_accessory_hooks);
 
     /* Optional second LCC transport: MCP2515 CAN controller over SPI.
      * lcc_task_init() above already called lcc_if_init() which registered

@@ -108,6 +108,13 @@ void dcc_pom_write_consist(dcc_engine_t *dcc, uint16_t address, bool is_long,
 void dcc_pom_write_long_consist(dcc_engine_t *dcc, uint16_t address,
                                 bool is_long, uint8_t cv19, uint8_t cv20);
 
+// Accessory commands, sent 3 extra times and kept out of the reminder
+// loop. `addr` is the 11-bit binary output address the packet carries
+// (packet_build_basic_accessory has the layout).
+void dcc_basic_accessory(dcc_engine_t *dcc, uint16_t addr, bool normal,
+                         bool activate);
+void dcc_extended_accessory(dcc_engine_t *dcc, uint16_t addr, uint8_t aspect);
+
 // Programming-on-Main read: a POM Verify Byte, sent `repeats` + 1 times
 // back to back. A RailCom decoder answers in the following cutouts.
 void dcc_pom_read_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,

@@ -57,6 +57,7 @@
 #define LCC_MTI_PROTOCOL_SUPPORT_INQUIRY   0x0828
 #define LCC_MTI_PROTOCOL_SUPPORT_REPLY     0x0668
 #define LCC_MTI_CONSUMER_IDENTIFY          0x08F4
+#define LCC_MTI_CONSUMER_IDENTIFIED_RANGE  0x04A4
 #define LCC_MTI_CONSUMER_IDENTIFIED_VALID  0x04C4
 #define LCC_MTI_CONSUMER_IDENTIFIED_INVALID 0x04C5
 #define LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN 0x04C7
@@ -253,6 +254,15 @@
 /* Produced by every train node (Train Control Standard 6.4), so throttles
  * can find trains with Identify Producer. */
 #define LCC_EVENT_IS_TRAIN             0x0101000000000303ULL
+
+/* Well-known DCC accessory events (OpenMRN TractionDefs). The low 12 bits
+ * of a basic accessory event are (output address << 1) | normal, so 4096
+ * events cover 2048 outputs. The low 19 bits of an extended accessory
+ * event are (address << 8) | aspect. Both use the 11-bit binary address
+ * from the packet: user address 1 is binary 4. */
+#define LCC_EVENT_ACCY_ACTIVATE_BASE   0x0101020000FF0000ULL
+#define LCC_EVENT_ACCY_DEACTIVATE_BASE 0x0101020000FE0000ULL
+#define LCC_EVENT_ACCY_EXT_BASE        0x0101020001000000ULL
 
 /* DCC-proxy train node ID base (06.01.00.00.XX.XX with XX.XX = DCC address). */
 #define LCC_TRAIN_NODE_ID_BASE  0x060100000000ULL

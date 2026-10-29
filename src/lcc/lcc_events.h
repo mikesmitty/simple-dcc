@@ -15,10 +15,17 @@
  *
  * Train nodes also produce Is Train, answered for every train node
  * without a table entry.
+ *
+ * A second table holds consumer ranges, blocks of events too big for one
+ * entry each, such as the 4096 DCC accessory events.
  */
 
 #ifndef LCC_MAX_EVENT_REGISTRATIONS
 #define LCC_MAX_EVENT_REGISTRATIONS  16
+#endif
+
+#ifndef LCC_MAX_EVENT_RANGES
+#define LCC_MAX_EVENT_RANGES  4
 #endif
 
 /* Role flags — OR together for dual producer/consumer. */
@@ -52,6 +59,17 @@ bool lcc_events_register(lcc_node_t *node,
                          uint8_t flags,
                          lcc_event_on_report_fn on_report,
                          lcc_event_state_fn state);
+
+/* Consume the 2^`mask_bits` events from `base`, whose low `mask_bits`
+ * bits must be zero. Identify Events gets one Consumer Range Identified
+ * for the block. Identify Consumer and Event Report for any event in it
+ * go to `state` and `on_report` with that event's ID. Returns false if
+ * the range table is full. */
+bool lcc_events_register_consumer_range(lcc_node_t *node,
+                                        uint64_t base,
+                                        uint8_t mask_bits,
+                                        lcc_event_on_report_fn on_report,
+                                        lcc_event_state_fn state);
 
 /* Dispatch an inbound event-related frame: CONSUMER_IDENTIFY (0x08F4),
  * PRODUCER_IDENTIFY (0x0914), EVENT_REPORT (0x05B4), and IDENTIFY_*

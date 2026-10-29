@@ -94,6 +94,7 @@ target_include_directories(test_svc_cv PRIVATE
 add_executable(test_lcc_interface
     test_lcc_interface.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/lcc/lcc_events.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/lcc/lcc_accessory.c
 )
 target_include_directories(test_lcc_interface PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}

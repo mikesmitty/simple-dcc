@@ -123,6 +123,29 @@ void dcc_pom_write_long_consist(dcc_engine_t *d, uint16_t a, bool is_long,
     (void)d; (void)a; (void)is_long; (void)cv19; (void)cv20;
 }
 
+/* The last accessory packets the CS was asked to send. */
+static int      accy_calls;
+static uint16_t accy_addr;
+static bool     accy_normal;
+static bool     accy_activate;
+static int      ext_accy_calls;
+static uint16_t ext_accy_addr;
+static uint8_t  ext_accy_aspect;
+void dcc_basic_accessory(dcc_engine_t *d, uint16_t addr, bool normal,
+                         bool activate) {
+    (void)d;
+    accy_calls++;
+    accy_addr = addr;
+    accy_normal = normal;
+    accy_activate = activate;
+}
+void dcc_extended_accessory(dcc_engine_t *d, uint16_t addr, uint8_t aspect) {
+    (void)d;
+    ext_accy_calls++;
+    ext_accy_addr = addr;
+    ext_accy_aspect = aspect;
+}
+
 /* ---- LCC module mocks -------------------------------------------------- */
 
 #include "lcc/lcc_node.h"
@@ -301,6 +324,7 @@ static void reset_all(void) {
     dcc_estop_all_calls = 0;
     dcc_estop_held = false;
     dcc_ensure_loco_calls = 0;
+    accy_calls = ext_accy_calls = 0;
     g_watchdog_calls = 0;
     captured_traction_hooks = NULL;
     captured_allocator = NULL;
@@ -838,6 +862,88 @@ static void test_is_train(void) {
     printf("  PASS: Is Train from train nodes\n");
 }
 
+/* The CS node consumes the well-known accessory events: a Consumer Range
+ * Identified for each range, an accessory packet for each Event Report,
+ * and Valid/Invalid for Identify Consumer once an output's state is
+ * known. */
+static void test_accessory_events(void) {
+    reset_all();
+    lcc_interface_load_config();
+    lcc_interface_init(&mock_dcc_engine, &mock_track_main, NULL);
+
+    /* User address 1 is binary 4. */
+    const uint64_t closed1 = LCC_EVENT_ACCY_ACTIVATE_BASE + (4 << 1) + 1;
+    const uint64_t thrown1 = LCC_EVENT_ACCY_ACTIVATE_BASE + (4 << 1);
+    assert(closed1 == 0x0101020000FF0009ULL);
+
+    event_frame(LCC_MTI_EVENTS_IDENTIFY_GLOBAL, 0);
+    assert(reply_mti(0x0101020000FF0FFFULL) == LCC_MTI_CONSUMER_IDENTIFIED_RANGE);
+    assert(reply_mti(0x0101020000FE0FFFULL) == LCC_MTI_CONSUMER_IDENTIFIED_RANGE);
+    assert(reply_mti(0x010102000107FFFFULL) == LCC_MTI_CONSUMER_IDENTIFIED_RANGE);
+
+    /* Unknown until an event sets the output. */
+    event_frame(LCC_MTI_CONSUMER_IDENTIFY, closed1);
+    assert(sent_event_count == 1);
+    assert(reply_mti(closed1) == LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN);
+
+    event_frame(LCC_MTI_EVENT_REPORT, closed1);
+    assert(accy_calls == 1 && accy_addr == 4 && accy_normal && accy_activate);
+    event_frame(LCC_MTI_CONSUMER_IDENTIFY, closed1);
+    assert(reply_mti(closed1) == LCC_MTI_CONSUMER_IDENTIFIED_VALID);
+    event_frame(LCC_MTI_CONSUMER_IDENTIFY, thrown1);
+    assert(reply_mti(thrown1) == LCC_MTI_CONSUMER_IDENTIFIED_INVALID);
+
+    event_frame(LCC_MTI_EVENT_REPORT, thrown1);
+    assert(accy_calls == 2 && accy_addr == 4 && !accy_normal && accy_activate);
+    event_frame(LCC_MTI_CONSUMER_IDENTIFY, thrown1);
+    assert(reply_mti(thrown1) == LCC_MTI_CONSUMER_IDENTIFIED_VALID);
+    event_frame(LCC_MTI_CONSUMER_IDENTIFY, closed1);
+    assert(reply_mti(closed1) == LCC_MTI_CONSUMER_IDENTIFIED_INVALID);
+
+    /* A deactivate event sends C = 0 and sets the state too. */
+    const uint64_t off_closed1 = LCC_EVENT_ACCY_DEACTIVATE_BASE + (4 << 1) + 1;
+    event_frame(LCC_MTI_EVENT_REPORT, off_closed1);
+    assert(accy_calls == 3 && accy_addr == 4 && accy_normal && !accy_activate);
+    event_frame(LCC_MTI_CONSUMER_IDENTIFY, closed1);
+    assert(reply_mti(closed1) == LCC_MTI_CONSUMER_IDENTIFIED_VALID);
+    event_frame(LCC_MTI_CONSUMER_IDENTIFY, off_closed1);
+    assert(reply_mti(off_closed1) == LCC_MTI_CONSUMER_IDENTIFIED_VALID);
+
+    /* Other outputs are still unknown, up to the highest, binary 2047. */
+    const uint64_t closed_top = LCC_EVENT_ACCY_ACTIVATE_BASE + 0xFFF;
+    event_frame(LCC_MTI_CONSUMER_IDENTIFY, closed_top);
+    assert(reply_mti(closed_top) == LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN);
+    event_frame(LCC_MTI_EVENT_REPORT, closed_top);
+    assert(accy_calls == 4 && accy_addr == 2047 && accy_normal);
+
+    /* Extended accessories: address and aspect, and no state. */
+    const uint64_t aspect5 = LCC_EVENT_ACCY_EXT_BASE | (4 << 8) | 5;
+    event_frame(LCC_MTI_EVENT_REPORT, aspect5);
+    assert(ext_accy_calls == 1 && ext_accy_addr == 4 && ext_accy_aspect == 5);
+    event_frame(LCC_MTI_CONSUMER_IDENTIFY, aspect5);
+    assert(reply_mti(aspect5) == LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN);
+    event_frame(LCC_MTI_EVENT_REPORT, LCC_EVENT_ACCY_EXT_BASE | 0x7FFFF);
+    assert(ext_accy_calls == 2 && ext_accy_addr == 2047 && ext_accy_aspect == 0xFF);
+
+    /* Just past the ranges: nothing. */
+    event_frame(LCC_MTI_EVENT_REPORT, LCC_EVENT_ACCY_ACTIVATE_BASE + 0x1000);
+    event_frame(LCC_MTI_EVENT_REPORT, LCC_EVENT_ACCY_EXT_BASE + 0x80000);
+    event_frame(LCC_MTI_CONSUMER_IDENTIFY, LCC_EVENT_ACCY_ACTIVATE_BASE + 0x1000);
+    assert(sent_event_count == 0);
+    assert(accy_calls == 4 && ext_accy_calls == 2);
+
+    /* Only the CS node consumes them, and it doesn't produce them. */
+    lcc_node_t *t = captured_allocator(3, LCC_TRAIN_SEARCH_FLAG_DCC, 0);
+    event_frame_to(t, LCC_MTI_EVENT_REPORT, closed1);
+    assert(accy_calls == 4);
+    event_frame_to(t, LCC_MTI_CONSUMER_IDENTIFY, closed1);
+    assert(sent_event_count == 0);
+    event_frame(LCC_MTI_PRODUCER_IDENTIFY, closed1);
+    assert(sent_event_count == 0);
+
+    printf("  PASS: DCC accessory events\n");
+}
+
 int main(void) {
     printf("test_lcc_interface:\n");
     test_node_id_generation();
@@ -849,6 +955,7 @@ int main(void) {
     test_pom_read_wiring();
     test_power_event_state();
     test_is_train();
+    test_accessory_events();
     printf("All LCC interface tests passed.\n");
     return 0;
 }
