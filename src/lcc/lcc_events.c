@@ -80,8 +80,19 @@ static void send_identified(const lcc_event_reg_t *r, uint8_t role)
     send_global_event(r->node, mti, r->event_id);
 }
 
+/* Every train node produces Is Train. It has no table entry, since a
+ * full train pool would overflow the table, and its state is Unknown,
+ * as OpenMRN's FixedEventProducer sends it. */
+static void send_is_train(const lcc_node_t *node)
+{
+    if (node->role == LCC_ROLE_TRAIN)
+        send_global_event(node, LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN,
+                          LCC_EVENT_IS_TRAIN);
+}
+
 static void emit_identities_for_node(const lcc_node_t *node)
 {
+    send_is_train(node);
     /* For each registration belonging to this node, emit the matching
      * Producer/Consumer Identified frame. */
     for (int i = 0; i < LCC_MAX_EVENT_REGISTRATIONS; i++) {
@@ -103,6 +114,10 @@ static void handle_single_identify(const lcc_node_t *node,
                                    uint64_t event_id,
                                    uint8_t role)
 {
+    if (role == LCC_EVENT_PRODUCER && event_id == LCC_EVENT_IS_TRAIN) {
+        send_is_train(node);
+        return;
+    }
     for (int i = 0; i < LCC_MAX_EVENT_REGISTRATIONS; i++) {
         if (!g_table[i].used || g_table[i].node != node)
             continue;

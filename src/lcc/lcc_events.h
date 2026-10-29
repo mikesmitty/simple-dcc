@@ -13,8 +13,8 @@
  * CLEAR_EMERG_STOP) and acts on them when they land via
  * PC_EVENT_REPORT (MTI 0x05B4).
  *
- * Train nodes register DCC-proxy Train Search events in M7; for M4 the
- * table just carries the CS's consumer set.
+ * Train nodes also produce Is Train, answered for every train node
+ * without a table entry.
  */
 
 #ifndef LCC_MAX_EVENT_REGISTRATIONS

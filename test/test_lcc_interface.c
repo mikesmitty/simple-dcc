@@ -313,15 +313,20 @@ static void reset_all(void) {
     memset(g_train_used, 0, sizeof(g_train_used));
 }
 
-/* Hand lcc_events.c a frame from another node and collect the replies. */
-static void event_frame(uint16_t mti, uint64_t event_id) {
+/* Hand lcc_events.c a frame from another node and collect `node`'s
+ * replies. */
+static void event_frame_to(lcc_node_t *node, uint16_t mti, uint64_t event_id) {
     lcc_frame_t f = { .id = lcc_can_id(mti, 0x123) };
     if (event_id) {
         lcc_event_to_buf(event_id, f.data);
         f.dlc = 8;
     }
     sent_event_count = 0;
-    lcc_events_handle_frame(&g_cs_node, &f);
+    lcc_events_handle_frame(node, &f);
+}
+
+static void event_frame(uint16_t mti, uint64_t event_id) {
+    event_frame_to(&g_cs_node, mti, event_id);
 }
 
 /* MTI of the one reply sent for `event_id`, or 0 if there was none. */
@@ -760,6 +765,43 @@ static void test_power_event_state(void) {
     printf("  PASS: power state in emergency event replies\n");
 }
 
+/* Train nodes produce Is Train with no table entry of their own; the CS
+ * node doesn't. */
+static void test_is_train(void) {
+    reset_all();
+    lcc_interface_load_config();
+    lcc_interface_init(&mock_dcc_engine, &mock_track_main, NULL);
+
+    lcc_node_t *t1 = captured_allocator(3, LCC_TRAIN_SEARCH_FLAG_DCC, 0);
+    lcc_node_t *t2 = captured_allocator(150, LCC_TRAIN_SEARCH_FLAG_DCC, 0);
+    assert(t1 && t2);
+
+    event_frame_to(t1, LCC_MTI_PRODUCER_IDENTIFY, LCC_EVENT_IS_TRAIN);
+    assert(sent_event_count == 1);
+    assert(reply_mti(LCC_EVENT_IS_TRAIN) == LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN);
+    event_frame_to(t2, LCC_MTI_PRODUCER_IDENTIFY, LCC_EVENT_IS_TRAIN);
+    assert(reply_mti(LCC_EVENT_IS_TRAIN) == LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN);
+
+    /* Not a consumer, and not something the CS produces. */
+    event_frame_to(t1, LCC_MTI_CONSUMER_IDENTIFY, LCC_EVENT_IS_TRAIN);
+    assert(sent_event_count == 0);
+    event_frame(LCC_MTI_PRODUCER_IDENTIFY, LCC_EVENT_IS_TRAIN);
+    assert(sent_event_count == 0);
+
+    /* Identify Events and the announcement after Initialization Complete. */
+    event_frame_to(t1, LCC_MTI_EVENTS_IDENTIFY_GLOBAL, 0);
+    assert(reply_mti(LCC_EVENT_IS_TRAIN) == LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN);
+    event_frame_to(t1, LCC_MTI_EVENTS_IDENTIFY_ADDRESSED, 0);
+    assert(reply_mti(LCC_EVENT_IS_TRAIN) == LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN);
+    sent_event_count = 0;
+    lcc_events_announce(t2);
+    assert(reply_mti(LCC_EVENT_IS_TRAIN) == LCC_MTI_PRODUCER_IDENTIFIED_UNKNOWN);
+    event_frame(LCC_MTI_EVENTS_IDENTIFY_GLOBAL, 0);
+    assert(reply_mti(LCC_EVENT_IS_TRAIN) == 0);
+
+    printf("  PASS: Is Train from train nodes\n");
+}
+
 int main(void) {
     printf("test_lcc_interface:\n");
     test_node_id_generation();
@@ -770,6 +812,7 @@ int main(void) {
     test_programming_track();
     test_pom_read_wiring();
     test_power_event_state();
+    test_is_train();
     printf("All LCC interface tests passed.\n");
     return 0;
 }

@@ -246,6 +246,10 @@
  * sends its 0xF8 CV reads/writes to whichever node answers. */
 #define LCC_EVENT_IS_PROGRAMMING_TRACK 0x090099FEFFFF0002ULL
 
+/* Produced by every train node (Train Control Standard 6.4), so throttles
+ * can find trains with Identify Producer. */
+#define LCC_EVENT_IS_TRAIN             0x0101000000000303ULL
+
 /* DCC-proxy train node ID base (06.01.00.00.XX.XX with XX.XX = DCC address). */
 #define LCC_TRAIN_NODE_ID_BASE  0x060100000000ULL
 
