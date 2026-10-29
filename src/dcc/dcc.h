@@ -94,6 +94,20 @@ bool dcc_emergency_stop_all_held(dcc_engine_t *dcc);
 void dcc_pom_write_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,
                         uint16_t cv, uint8_t value);
 
+// CV writes on the main that S-9.2.1 gives their own instruction, sent
+// like dcc_pom_write_byte (3 repeats, no loco state touched):
+//   - CV17 and CV18 together: the Long Address instruction, which also
+//     sets CV29 bit 5 so the decoder answers to its new long address.
+//   - CV19: Consist Control. Bit 7 means reversed in the consist; a
+//     consist address (bits 0-6) of 0 takes the loco out of its consist.
+//   - CV19 and CV20 together: the Consist Address short form.
+void dcc_pom_write_long_address(dcc_engine_t *dcc, uint16_t address,
+                                bool is_long, uint8_t cv17, uint8_t cv18);
+void dcc_pom_write_consist(dcc_engine_t *dcc, uint16_t address, bool is_long,
+                           uint8_t cv19);
+void dcc_pom_write_long_consist(dcc_engine_t *dcc, uint16_t address,
+                                bool is_long, uint8_t cv19, uint8_t cv20);
+
 // Programming-on-Main read: a POM Verify Byte, sent `repeats` + 1 times
 // back to back. A RailCom decoder answers in the following cutouts.
 void dcc_pom_read_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,

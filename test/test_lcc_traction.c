@@ -42,10 +42,22 @@ typedef struct {
     int      calls;
 } pom_rec_t;
 
+/* The CV-pair instructions: which hook, and the bytes it got. */
+typedef enum { PAIR_LONG_ADDRESS = 1, PAIR_CONSIST, PAIR_LONG_CONSIST } pair_kind_t;
+typedef struct {
+    pair_kind_t kind;
+    uint16_t    addr;
+    bool        is_long;
+    uint8_t     first;
+    uint8_t     second;  /* 0 for Consist Control */
+} pair_call_t;
+
 static throttle_rec_t last_throttle;
 static function_rec_t last_function;
 static estop_rec_t    last_estop;
 static pom_rec_t      last_pom;
+static pair_call_t    pair_calls[4];
+static int            pair_count;
 
 static void mock_set_throttle(uint16_t addr, bool is_long, uint8_t step, bool forward) {
     last_throttle.addr = addr;
@@ -75,6 +87,24 @@ static void mock_pom_write_byte(uint16_t addr, bool is_long,
     last_pom.cv = cv;
     last_pom.value = value;
     last_pom.calls++;
+}
+
+static void record_pair(pair_kind_t kind, uint16_t addr, bool is_long,
+                        uint8_t first, uint8_t second) {
+    if (pair_count < 4)
+        pair_calls[pair_count] = (pair_call_t){ kind, addr, is_long, first, second };
+    pair_count++;
+}
+static void mock_pom_write_long_address(uint16_t addr, bool is_long,
+                                        uint8_t cv17, uint8_t cv18) {
+    record_pair(PAIR_LONG_ADDRESS, addr, is_long, cv17, cv18);
+}
+static void mock_pom_write_consist(uint16_t addr, bool is_long, uint8_t cv19) {
+    record_pair(PAIR_CONSIST, addr, is_long, cv19, 0);
+}
+static void mock_pom_write_long_consist(uint16_t addr, bool is_long,
+                                        uint8_t cv19, uint8_t cv20) {
+    record_pair(PAIR_LONG_CONSIST, addr, is_long, cv19, cv20);
 }
 
 /* ---- lcc_node / lcc_if mocks -------------------------------------------- */
@@ -166,6 +196,8 @@ static void reset_all(void) {
     memset(g_mock_registry, 0, sizeof(g_mock_registry));
     g_mock_count = 0;
     mock_estop_held = false;
+    memset(pair_calls, 0, sizeof(pair_calls));
+    pair_count = 0;
 
     lcc_traction_hooks_t hooks = {
         .set_throttle   = mock_set_throttle,
@@ -173,6 +205,9 @@ static void reset_all(void) {
         .emergency_stop = mock_emergency_stop,
         .global_estop_held = mock_global_estop_held,
         .pom_write_byte = mock_pom_write_byte,
+        .pom_write_long_address = mock_pom_write_long_address,
+        .pom_write_consist      = mock_pom_write_consist,
+        .pom_write_long_consist = mock_pom_write_long_consist,
     };
     lcc_traction_set_hooks(&hooks);
 }
@@ -961,6 +996,111 @@ static void test_cv_space_multi_byte_direct_write(void) {
     printf("  PASS: CV space multi-byte direct write POMs each CV\n");
 }
 
+static bool pair_call_is(int i, pair_kind_t kind, uint8_t first, uint8_t second) {
+    return i < pair_count && pair_calls[i].kind == kind &&
+           pair_calls[i].first == first && pair_calls[i].second == second;
+}
+
+/* CV17 and CV18 written together send Long Address, taking both bytes; a
+ * one-byte write to either stays a POM write. */
+static void test_cv_space_long_address_instruction(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 3, false, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    uint8_t addr3000[2] = { 0xCB, 0xB8 };
+    assert_write_reply(&n, 16, addr3000, 2, 0);
+    assert(pair_count == 1);
+    assert(pair_call_is(0, PAIR_LONG_ADDRESS, 0xCB, 0xB8));
+    assert(pair_calls[0].addr == 3 && !pair_calls[0].is_long);
+    assert(last_pom.calls == 0);
+
+    /* Reaches a long-address train in its long form. */
+    lcc_node_t n2; lcc_train_state_t t2;
+    init_node_with_train(&n2, &t2, 150, true, 0xABD);
+    lcc_traction_register_cv_space(&n2);
+    assert_write_reply(&n2, 16, addr3000, 2, 0);
+    assert(pair_calls[1].addr == 150 && pair_calls[1].is_long);
+
+    /* One byte to CV17 or CV18 alone. */
+    pair_count = 0;
+    uint8_t v = 0xC4;
+    assert_write_reply(&n, 16, &v, 1, 0);
+    assert(last_pom.calls == 1 && last_pom.cv == 17 && last_pom.value == 0xC4);
+    assert_write_reply(&n, 17, &v, 1, 0);
+    assert(last_pom.calls == 2 && last_pom.cv == 18);
+    assert(pair_count == 0);
+
+    /* CV16..CV18: a POM write to CV16, then the pair. */
+    uint8_t three[3] = { 0x11, 0xCB, 0xB8 };
+    assert_write_reply(&n, 15, three, 3, 0);
+    assert(last_pom.calls == 3 && last_pom.cv == 16 && last_pom.value == 0x11);
+    assert(pair_count == 1 && pair_call_is(0, PAIR_LONG_ADDRESS, 0xCB, 0xB8));
+
+    /* Through CV_INDEX, CV17 is one byte: a POM write. */
+    t.pom_cv_index = 17;
+    assert_write_reply(&n, 0x7F000004u, &v, 1, 0);
+    assert(last_pom.calls == 4 && last_pom.cv == 17);
+    assert(pair_count == 1);
+
+    printf("  PASS: CV space CV17+CV18 sends Long Address\n");
+}
+
+/* CV19 alone sends Consist Control, directly or through CV_INDEX; CV19 and
+ * CV20 together send the Consist Address short form, taking both bytes. */
+static void test_cv_space_consist_instructions(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 3, false, 0xABC);
+    lcc_traction_register_cv_space(&n);
+
+    uint8_t cv19 = 0x85;
+    assert_write_reply(&n, 18, &cv19, 1, 0);
+    assert(pair_count == 1 && pair_call_is(0, PAIR_CONSIST, 0x85, 0));
+    assert(pair_calls[0].addr == 3 && !pair_calls[0].is_long);
+
+    t.pom_cv_index = 19;
+    cv19 = 0x00;
+    assert_write_reply(&n, 0x7F000004u, &cv19, 1, 0);
+    assert(pair_count == 2 && pair_call_is(1, PAIR_CONSIST, 0x00, 0));
+
+    uint8_t both[2] = { 0x05, 0x00 };
+    assert_write_reply(&n, 18, both, 2, 0);
+    assert(pair_count == 3 && pair_call_is(2, PAIR_LONG_CONSIST, 0x05, 0x00));
+    assert(last_pom.calls == 0);
+
+    /* CV18 and CV19: a POM write to CV18, then Consist Control. */
+    pair_count = 0;
+    uint8_t cv18_19[2] = { 0x96, 0x07 };
+    assert_write_reply(&n, 17, cv18_19, 2, 0);
+    assert(last_pom.calls == 1 && last_pom.cv == 18 && last_pom.value == 0x96);
+    assert(pair_count == 1 && pair_call_is(0, PAIR_CONSIST, 0x07, 0));
+
+    /* CV17..CV20: both pairs. */
+    pair_count = 0;
+    uint8_t four[4] = { 0xCB, 0xB8, 0x05, 0x00 };
+    assert_write_reply(&n, 16, four, 4, 0);
+    assert(pair_count == 2);
+    assert(pair_call_is(0, PAIR_LONG_ADDRESS, 0xCB, 0xB8));
+    assert(pair_call_is(1, PAIR_LONG_CONSIST, 0x05, 0x00));
+
+    /* CV17..CV19: Long Address, then Consist Control. */
+    pair_count = 0;
+    assert_write_reply(&n, 16, four, 3, 0);
+    assert(pair_count == 2);
+    assert(pair_call_is(0, PAIR_LONG_ADDRESS, 0xCB, 0xB8));
+    assert(pair_call_is(1, PAIR_CONSIST, 0x05, 0));
+
+    /* CV20 alone stays a POM write. */
+    uint8_t cv20 = 0x01;
+    assert_write_reply(&n, 19, &cv20, 1, 0);
+    assert(last_pom.calls == 2 && last_pom.cv == 20);
+    assert(pair_count == 2);
+
+    printf("  PASS: CV space CV19 sends Consist Control, CV19+CV20 the short form\n");
+}
+
 static void assert_cv_read_fails(lcc_node_t *n, uint32_t addr, uint16_t err) {
     uint8_t pkt[16];
     uint8_t len = mc_read(pkt, addr, 1);
@@ -1190,6 +1330,8 @@ int main(void) {
     test_cv_space_direct_write_long_address();
     test_cv_space_unwritable_addresses_fail();
     test_cv_space_multi_byte_direct_write();
+    test_cv_space_long_address_instruction();
+    test_cv_space_consist_instructions();
     test_cv_space_reads_fail_without_railcom();
     test_cv_space_read_is_a_pom_read();
     test_cv_space_value_read();

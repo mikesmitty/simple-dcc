@@ -40,6 +40,11 @@ void lcc_train_state_init(lcc_train_state_t *state,
  *   0x7F000005  1 byte   CV verify value (not implemented)
  *   0x7F000006  1 byte   CV verify result (not implemented)
  *
+ * Three writes send the instruction S-9.2.1 has for them instead of POM
+ * writes (see write_cvs): CV17 and CV18 written together (Long Address),
+ * CV19 alone (Consist Control, direct or through CV_VALUE), and CV19 and
+ * CV20 written together (the Consist Address short form).
+ *
  * All callbacks run on the LCC task with `node->train` pointing at the
  * train whose space was addressed — mem-config's per-node dispatch is
  * what routes 0xF8 to the right decoder without a global CV-owner. CV
@@ -48,6 +53,8 @@ void lcc_train_state_init(lcc_train_state_t *state,
  */
 
 enum {
+    CV_LONG_ADDRESS         = 17u,         /* CV17, then CV18 */
+    CV_CONSIST_ADDRESS      = 19u,         /* CV19, then CV20 */
     CV_DIRECT_COUNT         = 1024u,       /* CVs 1..1024 */
     CV_OFFSET_INDEX         = 0x7F000000u,
     CV_OFFSET_VALUE         = 0x7F000004u,
@@ -103,20 +110,47 @@ static uint16_t cv_space_read(lcc_node_t *node, uint32_t addr,
     return 0;
 }
 
+/* Write `count` CVs from `cv` on, returning how many it took. Most CVs are
+ * a one-byte POM write each, CV17 or CV18 alone included. A long address
+ * (CV17 and CV18) and a consist address (CV19, or CV19 and CV20) get the
+ * instructions S-9.2.1 has for them, which the host sends like a POM
+ * write. The Long Address instruction also sets CV29 bit 5, so a long
+ * address takes one write instead of three. */
+static uint16_t write_cvs(const lcc_train_state_t *t, uint16_t cv,
+                          uint16_t count, const uint8_t *in)
+{
+    if (cv == CV_LONG_ADDRESS && count >= 2) {
+        if (g_hooks.pom_write_long_address)
+            g_hooks.pom_write_long_address(t->dcc_address, t->is_long_address,
+                                           in[0], in[1]);
+        return 2;
+    }
+    if (cv == CV_CONSIST_ADDRESS && count >= 2) {
+        if (g_hooks.pom_write_long_consist)
+            g_hooks.pom_write_long_consist(t->dcc_address, t->is_long_address,
+                                           in[0], in[1]);
+        return 2;
+    }
+    if (cv == CV_CONSIST_ADDRESS) {
+        if (g_hooks.pom_write_consist)
+            g_hooks.pom_write_consist(t->dcc_address, t->is_long_address,
+                                      in[0]);
+        return 1;
+    }
+    if (g_hooks.pom_write_byte)
+        g_hooks.pom_write_byte(t->dcc_address, t->is_long_address, cv, in[0]);
+    return 1;
+}
+
 static uint16_t cv_space_write(lcc_node_t *node, uint32_t addr,
                                uint16_t count, const uint8_t *in,
                                uint16_t *error)
 {
     if (!node->train) return 0;
 
-    /* Direct CV address: one-byte POM write to CV addr + 1. */
-    if (addr < CV_DIRECT_COUNT && count >= 1) {
-        if (g_hooks.pom_write_byte)
-            g_hooks.pom_write_byte(node->train->dcc_address,
-                                   node->train->is_long_address,
-                                   (uint16_t)(addr + 1), in[0]);
-        return 1;
-    }
+    /* Direct CV address: CV addr + 1 onward. */
+    if (addr < CV_DIRECT_COUNT && count >= 1)
+        return write_cvs(node->train, (uint16_t)(addr + 1), count, in);
 
     /* CV_INDEX latches the 1-based CV number. OpenMRN accepts 1-4 byte
      * partial writes anywhere within the 4-byte span; match that. */
@@ -140,19 +174,15 @@ static uint16_t cv_space_write(lcc_node_t *node, uint32_t addr,
         return count;
     }
 
-    /* CV_VALUE: one-byte write triggers the POM packet via the hook, for
-     * the CV latched in CV_INDEX — which must be one POM can reach. */
+    /* CV_VALUE: one-byte write to the CV latched in CV_INDEX, which must
+     * be one POM can reach. */
     if (addr == CV_OFFSET_VALUE && count >= 1) {
         uint16_t cv = node->train->pom_cv_index;
         if (cv == 0 || cv > CV_DIRECT_COUNT) {
             *error = LCC_ERR_INVALID_ARGUMENTS;
             return 0;
         }
-        if (g_hooks.pom_write_byte)
-            g_hooks.pom_write_byte(node->train->dcc_address,
-                                   node->train->is_long_address,
-                                   cv, in[0]);
-        return 1;
+        return write_cvs(node->train, cv, 1, in);
     }
 
     /* VERIFY_VALUE: Phase 3. Accept + drop so JMRI's writes don't error

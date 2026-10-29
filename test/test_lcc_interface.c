@@ -110,6 +110,18 @@ void dcc_pom_write_byte(dcc_engine_t *d, uint16_t a, bool is_long,
                         uint16_t cv, uint8_t v) {
     (void)d; (void)a; (void)is_long; (void)cv; (void)v;
 }
+void dcc_pom_write_long_address(dcc_engine_t *d, uint16_t a, bool is_long,
+                                uint8_t cv17, uint8_t cv18) {
+    (void)d; (void)a; (void)is_long; (void)cv17; (void)cv18;
+}
+void dcc_pom_write_consist(dcc_engine_t *d, uint16_t a, bool is_long,
+                           uint8_t cv19) {
+    (void)d; (void)a; (void)is_long; (void)cv19;
+}
+void dcc_pom_write_long_consist(dcc_engine_t *d, uint16_t a, bool is_long,
+                                uint8_t cv19, uint8_t cv20) {
+    (void)d; (void)a; (void)is_long; (void)cv19; (void)cv20;
+}
 
 /* ---- LCC module mocks -------------------------------------------------- */
 

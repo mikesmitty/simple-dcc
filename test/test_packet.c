@@ -310,6 +310,80 @@ static void test_pom_read_layout(void) {
     printf("  PASS: POM read layout\n");
 }
 
+static bool pkt_is(const dcc_packet_t *pkt, const uint8_t *want, uint8_t len) {
+    return pkt->len == len && memcmp(pkt->data, want, len) == 0;
+}
+
+static void test_long_address_instruction(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // Give the loco long address 3000: CV17 = 0xCB, CV18 = 0xB8, after the
+    // CV access short form 1111_0100.
+    packet_build_long_address(pkt, 3, false, 0xCB, 0xB8, 3);
+    const uint8_t short_loco[] = { 0x03, 0xF4, 0xCB, 0xB8 };
+    assert(pkt_is(pkt, short_loco, sizeof(short_loco)));
+    assert(pkt->priority == PRIORITY_HIGH);
+    assert(pkt->repeats == 3);
+
+    packet_build_long_address(pkt, 150, true, 0xCB, 0xB8, 3);
+    const uint8_t long_loco[] = { 0xC0, 0x96, 0xF4, 0xCB, 0xB8 };
+    assert(pkt_is(pkt, long_loco, sizeof(long_loco)));
+
+    // Five bytes plus the checksum is the longest packet the pool holds.
+    encoded_packet_t enc = packet_encode(pkt);
+    assert(enc.count == 2);
+    assert(enc.words[0] == 0x06C096F4);
+    assert(enc.words[1] == ((uint32_t)0xCB << 24 | (uint32_t)0xB8 << 16 |
+                            (uint32_t)(0xC0 ^ 0x96 ^ 0xF4 ^ 0xCB ^ 0xB8) << 8));
+
+    packet_free(pkt);
+    printf("  PASS: Long Address instruction\n");
+}
+
+static void test_consist_control(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // CV19 = 0x85: consist 5, reversed in it.
+    packet_build_consist_control(pkt, 3, false, 0x85, 3);
+    const uint8_t rev_short[] = { 0x03, 0x13, 0x05 };
+    assert(pkt_is(pkt, rev_short, sizeof(rev_short)));
+    assert(pkt->priority == PRIORITY_HIGH);
+    assert(pkt->repeats == 3);
+
+    packet_build_consist_control(pkt, 150, true, 0x05, 3);
+    const uint8_t fwd_long[] = { 0xC0, 0x96, 0x12, 0x05 };
+    assert(pkt_is(pkt, fwd_long, sizeof(fwd_long)));
+
+    // Consist address 0 leaves the consist, whatever bit 7 says.
+    packet_build_consist_control(pkt, 3, false, 0x80, 3);
+    const uint8_t leave[] = { 0x03, 0x12, 0x00 };
+    assert(pkt_is(pkt, leave, sizeof(leave)));
+
+    packet_free(pkt);
+    printf("  PASS: Consist Control\n");
+}
+
+static void test_long_consist_address(void) {
+    packet_pool_init();
+    dcc_packet_t *pkt = packet_alloc();
+
+    // CV19 and CV20 pass through as given, after 1111_0110.
+    packet_build_long_consist_address(pkt, 3, false, 0x05, 0x00, 3);
+    const uint8_t short_loco[] = { 0x03, 0xF6, 0x05, 0x00 };
+    assert(pkt_is(pkt, short_loco, sizeof(short_loco)));
+    assert(pkt->priority == PRIORITY_HIGH);
+    assert(pkt->repeats == 3);
+
+    packet_build_long_consist_address(pkt, 150, true, 0x85, 0x12, 3);
+    const uint8_t long_loco[] = { 0xC0, 0x96, 0xF6, 0x85, 0x12 };
+    assert(pkt_is(pkt, long_loco, sizeof(long_loco)));
+
+    packet_free(pkt);
+    printf("  PASS: Consist Address short form\n");
+}
+
 int main(void) {
     printf("test_packet:\n");
     test_idle_packet_encode();
@@ -323,6 +397,9 @@ int main(void) {
     test_pom_write_auto_long_address();
     test_pom_write_short_forced_long();
     test_pom_read_layout();
+    test_long_address_instruction();
+    test_consist_control();
+    test_long_consist_address();
     test_svc_write_byte_layout();
     test_svc_verify_byte_layout();
     test_svc_high_cv();

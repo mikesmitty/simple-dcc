@@ -295,6 +295,30 @@ void dcc_pom_write_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,
     send_packet(dcc, pkt);
 }
 
+void dcc_pom_write_long_address(dcc_engine_t *dcc, uint16_t address,
+                                bool is_long, uint8_t cv17, uint8_t cv18) {
+    dcc_packet_t *pkt = packet_alloc();
+    if (!pkt) return;
+    packet_build_long_address(pkt, address, is_long, cv17, cv18, 3);
+    send_packet(dcc, pkt);
+}
+
+void dcc_pom_write_consist(dcc_engine_t *dcc, uint16_t address, bool is_long,
+                           uint8_t cv19) {
+    dcc_packet_t *pkt = packet_alloc();
+    if (!pkt) return;
+    packet_build_consist_control(pkt, address, is_long, cv19, 3);
+    send_packet(dcc, pkt);
+}
+
+void dcc_pom_write_long_consist(dcc_engine_t *dcc, uint16_t address,
+                                bool is_long, uint8_t cv19, uint8_t cv20) {
+    dcc_packet_t *pkt = packet_alloc();
+    if (!pkt) return;
+    packet_build_long_consist_address(pkt, address, is_long, cv19, cv20, 3);
+    send_packet(dcc, pkt);
+}
+
 void dcc_pom_read_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,
                        uint16_t cv, int8_t repeats) {
     dcc_packet_t *pkt = packet_alloc();

@@ -66,6 +66,15 @@ typedef struct {
      * hosts that don't own a DCC engine; writes are then no-ops. */
     void (*pom_write_byte)(uint16_t addr, bool is_long,
                            uint16_t cv, uint8_t value);
+    /* CV writes the traction CV space sends as their own instruction
+     * instead of POM writes: CV17 and CV18 together as Long Address, CV19
+     * alone as Consist Control, CV19 and CV20 together as the Consist
+     * Address short form. NULL: those writes are no-ops. */
+    void (*pom_write_long_address)(uint16_t addr, bool is_long,
+                                   uint8_t cv17, uint8_t cv18);
+    void (*pom_write_consist)(uint16_t addr, bool is_long, uint8_t cv19);
+    void (*pom_write_long_consist)(uint16_t addr, bool is_long,
+                                   uint8_t cv19, uint8_t cv20);
     /* POM read (over RailCom) for the traction CV space. Return 0 once the
      * read has started; the host then reports the value or an error with
      * lcc_memconfig_complete(). Any other return value is the OpenLCB

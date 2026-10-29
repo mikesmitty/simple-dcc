@@ -68,6 +68,31 @@ void           packet_build_pom_read_byte(dcc_packet_t *pkt,
                                           uint16_t address, bool is_long,
                                           uint16_t cv, int8_t repeats);
 
+// Build a Consist Control packet (S-9.2.1 2.3.1.4) from a CV19 value:
+//     {address}  0001_001D  0AAAAAAA
+// D is bit 7 of `cv19` (1 = reversed in the consist) and AAAAAAA bits 0-6,
+// the consist address. A consist address of 0 takes the loco out of its
+// consist and is sent as 0x12 0x00. Same address rules and priority as
+// packet_build_pom_write_byte.
+void           packet_build_consist_control(dcc_packet_t *pkt,
+                                            uint16_t address, bool is_long,
+                                            uint8_t cv19, int8_t repeats);
+
+// Build a CV access short form packet (S-9.2.1 2.3.7.2) that writes two
+// CVs at once. Decoders act on these only after two identical packets, so
+// `repeats` must be at least 1.
+//     {address}  1111_0100  CV17  CV18    Long Address (also sets CV29 bit 5)
+//     {address}  1111_0110  CV19  CV20    Consist Address
+// Same address rules and priority as packet_build_pom_write_byte.
+void           packet_build_long_address(dcc_packet_t *pkt,
+                                         uint16_t address, bool is_long,
+                                         uint8_t cv17, uint8_t cv18,
+                                         int8_t repeats);
+void           packet_build_long_consist_address(dcc_packet_t *pkt,
+                                                 uint16_t address, bool is_long,
+                                                 uint8_t cv19, uint8_t cv20,
+                                                 int8_t repeats);
+
 // Build an NMRA S-9.2.3 Direct Byte Service Mode packet. Service Mode
 // packets have no address byte — they are broadcast on the isolated
 // programming track. Wire layout:

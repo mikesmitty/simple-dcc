@@ -50,6 +50,7 @@ USB CDC → task_serial → GridConnect parser → CAN RX → src/lcc/
 src/lcc/ traction callbacks → DCC engine → priority queue → wavegen → PIO
 src/lcc/ memconfig 0xF8 on CS node → task_servicemode → PIO2 (prog track) → ACK via ADC
 src/lcc/ memconfig 0xF8 on train node → task_railcom → POM read on main → RailCom reply on UART0
+src/lcc/ memconfig 0xF8 write on train node → DCC engine → POM write (CV17+18: Long Address, CV19: Consist Control, CV19+20: consist short form)
 ```
 
 ## Conventions

@@ -118,9 +118,11 @@ void packet_make_idle(dcc_packet_t *pkt) {
 
 #define SHORT_ADDRESS_MAX_PKT 127
 
-static void packet_build_pom(dcc_packet_t *pkt, uint8_t opcode,
-                             uint16_t address, bool is_long,
-                             uint16_t cv, uint8_t value, int8_t repeats) {
+// Start a packet for a multi-function decoder on the main: the short or
+// long address, then PRIORITY_HIGH and `repeats`, as programming on the
+// main uses.
+static void packet_start_ops(dcc_packet_t *pkt, uint16_t address,
+                             bool is_long, int8_t repeats) {
     packet_reset(pkt);
 
     if (is_long || address > SHORT_ADDRESS_MAX_PKT) {
@@ -130,15 +132,21 @@ static void packet_build_pom(dcc_packet_t *pkt, uint8_t opcode,
         packet_add_byte(pkt, (uint8_t)address);
     }
 
+    pkt->address  = address;
+    pkt->priority = PRIORITY_HIGH;
+    pkt->repeats  = repeats;
+}
+
+static void packet_build_pom(dcc_packet_t *pkt, uint8_t opcode,
+                             uint16_t address, bool is_long,
+                             uint16_t cv, uint8_t value, int8_t repeats) {
+    packet_start_ops(pkt, address, is_long, repeats);
+
     // NMRA S-9.2.1: the 10-bit CV number on the wire is (cv - 1).
     uint16_t wire_cv = (uint16_t)(cv - 1) & 0x3FF;
     packet_add_byte(pkt, opcode | (uint8_t)((wire_cv >> 8) & 0x03));
     packet_add_byte(pkt, (uint8_t)(wire_cv & 0xFF));
     packet_add_byte(pkt, value);
-
-    pkt->address  = address;
-    pkt->priority = PRIORITY_HIGH;
-    pkt->repeats  = repeats;
 }
 
 void packet_build_pom_write_byte(dcc_packet_t *pkt,
@@ -152,6 +160,40 @@ void packet_build_pom_read_byte(dcc_packet_t *pkt,
                                 uint16_t address, bool is_long,
                                 uint16_t cv, int8_t repeats) {
     packet_build_pom(pkt, 0xE4, address, is_long, cv, 0, repeats);
+}
+
+void packet_build_consist_control(dcc_packet_t *pkt,
+                                  uint16_t address, bool is_long,
+                                  uint8_t cv19, int8_t repeats) {
+    packet_start_ops(pkt, address, is_long, repeats);
+
+    uint8_t consist = cv19 & 0x7F;
+    bool reversed = consist != 0 && (cv19 & 0x80);
+    packet_add_byte(pkt, reversed ? 0x13 : 0x12);
+    packet_add_byte(pkt, consist);
+}
+
+static void packet_build_short_form(dcc_packet_t *pkt, uint8_t opcode,
+                                    uint16_t address, bool is_long,
+                                    uint8_t first, uint8_t second,
+                                    int8_t repeats) {
+    packet_start_ops(pkt, address, is_long, repeats);
+    packet_add_byte(pkt, opcode);
+    packet_add_byte(pkt, first);
+    packet_add_byte(pkt, second);
+}
+
+void packet_build_long_address(dcc_packet_t *pkt,
+                               uint16_t address, bool is_long,
+                               uint8_t cv17, uint8_t cv18, int8_t repeats) {
+    packet_build_short_form(pkt, 0xF4, address, is_long, cv17, cv18, repeats);
+}
+
+void packet_build_long_consist_address(dcc_packet_t *pkt,
+                                       uint16_t address, bool is_long,
+                                       uint8_t cv19, uint8_t cv20,
+                                       int8_t repeats) {
+    packet_build_short_form(pkt, 0xF6, address, is_long, cv19, cv20, repeats);
 }
 
 static void packet_build_svc_direct(dcc_packet_t *pkt, uint8_t opcode,

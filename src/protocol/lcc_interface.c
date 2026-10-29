@@ -509,6 +509,20 @@ static void traction_pom_write_byte(uint16_t addr, bool is_long,
                                     uint16_t cv, uint8_t value) {
     if (g_dcc_engine) dcc_pom_write_byte(g_dcc_engine, addr, is_long, cv, value);
 }
+static void traction_pom_write_long_address(uint16_t addr, bool is_long,
+                                            uint8_t cv17, uint8_t cv18) {
+    if (g_dcc_engine)
+        dcc_pom_write_long_address(g_dcc_engine, addr, is_long, cv17, cv18);
+}
+static void traction_pom_write_consist(uint16_t addr, bool is_long,
+                                       uint8_t cv19) {
+    if (g_dcc_engine) dcc_pom_write_consist(g_dcc_engine, addr, is_long, cv19);
+}
+static void traction_pom_write_long_consist(uint16_t addr, bool is_long,
+                                            uint8_t cv19, uint8_t cv20) {
+    if (g_dcc_engine)
+        dcc_pom_write_long_consist(g_dcc_engine, addr, is_long, cv19, cv20);
+}
 
 /* POM read over RailCom. The completion callback runs on task_railcom;
  * memconfig sends the reply from the LCC task. */
@@ -535,6 +549,9 @@ static const lcc_traction_hooks_t g_traction_hooks = {
     .emergency_stop = traction_emergency_stop,
     .global_estop_held = traction_global_estop_held,
     .pom_write_byte = traction_pom_write_byte,
+    .pom_write_long_address = traction_pom_write_long_address,
+    .pom_write_consist      = traction_pom_write_consist,
+    .pom_write_long_consist = traction_pom_write_long_consist,
     .pom_read_byte  = traction_pom_read_byte,
 };
 
