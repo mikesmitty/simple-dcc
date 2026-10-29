@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/mikesmitty/simple-dcc/compare/v0.5.0...v0.5.1) (2026-10-29)
+
+
+### Miscellaneous
+
+* Update actions/checkout action to v7 ([#12](https://github.com/mikesmitty/simple-dcc/issues/12)) ([c0415a2](https://github.com/mikesmitty/simple-dcc/commit/c0415a26373ee50c68f5b3f7ef41f5e322d4c42e))
+* Update googleapis/release-please-action action to v5 ([#13](https://github.com/mikesmitty/simple-dcc/issues/13)) ([34f4bcb](https://github.com/mikesmitty/simple-dcc/commit/34f4bcb92803c8680591b53f5988788ac8788807))
+
 ## [0.5.0](https://github.com/mikesmitty/simple-dcc/compare/v0.4.0...v0.5.0) (2026-10-29)
 
 
