@@ -155,7 +155,7 @@
 #define LCC_PIP_DISPLAY             (1ULL << 37)
 #define LCC_PIP_SIMPLE_NODE_INFO    (1ULL << 36)
 #define LCC_PIP_CDI                 (1ULL << 35)
-#define LCC_PIP_TRAIN_CONTROL       (1ULL << 30)
+#define LCC_PIP_TRAIN_CONTROL       (1ULL << 34)
 
 /* Memory Configuration protocol command byte */
 #define LCC_MEMCONFIG_CMD           0x20

@@ -643,6 +643,8 @@ static lcc_node_t *train_allocator(uint16_t dcc_addr, uint8_t flags,
     lcc_node_init(node, node_id, LCC_ROLE_TRAIN);
     node->snip     = &g_train_snip;
     node->pip_bits = LCC_PIP_SIMPLE_PROTOCOL
+                   | LCC_PIP_DATAGRAM
+                   | LCC_PIP_MEMORY_CONFIG
                    | LCC_PIP_EVENT_EXCHANGE
                    | LCC_PIP_SIMPLE_NODE_INFO
                    | LCC_PIP_TRAIN_CONTROL;

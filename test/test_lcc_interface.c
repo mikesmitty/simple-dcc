@@ -539,6 +539,13 @@ static void test_allocator_and_events(void) {
     assert(n->train->is_long_address == false);
     assert(dcc_ensure_loco_calls == 1);
 
+    /* Traction Control, plus the datagrams and memory configuration the
+     * CV space (0xF8) needs. */
+    assert(n->pip_bits & LCC_PIP_TRAIN_CONTROL);
+    assert(n->pip_bits & LCC_PIP_DATAGRAM);
+    assert(n->pip_bits & LCC_PIP_MEMORY_CONFIG);
+    assert(LCC_PIP_TRAIN_CONTROL == 0x000400000000ULL);
+
     /* Idempotent: a second allocate for the same address returns the
      * same slot and does not burn another ensure_loco call. */
     lcc_node_t *n2 = captured_allocator(42, LCC_TRAIN_SEARCH_FLAG_DCC, 0);
