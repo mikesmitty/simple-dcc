@@ -66,6 +66,8 @@ static void mock_emergency_stop(uint16_t addr, bool is_long) {
     last_estop.is_long = is_long;
     last_estop.calls++;
 }
+static bool mock_estop_held;
+static bool mock_global_estop_held(void) { return mock_estop_held; }
 static void mock_pom_write_byte(uint16_t addr, bool is_long,
                                 uint16_t cv, uint8_t value) {
     last_pom.addr = addr;
@@ -163,11 +165,13 @@ static void reset_all(void) {
     memset(&prev_reply, 0, sizeof(prev_reply));
     memset(g_mock_registry, 0, sizeof(g_mock_registry));
     g_mock_count = 0;
+    mock_estop_held = false;
 
     lcc_traction_hooks_t hooks = {
         .set_throttle   = mock_set_throttle,
         .set_function   = mock_set_function,
         .emergency_stop = mock_emergency_stop,
+        .global_estop_held = mock_global_estop_held,
         .pom_write_byte = mock_pom_write_byte,
     };
     lcc_traction_set_hooks(&hooks);
@@ -329,15 +333,61 @@ static void test_emergency_stop(void) {
     lcc_node_t n; lcc_train_state_t t;
     init_node_with_train(&n, &t, 42, false, 0x456);
 
+    /* Running in reverse. */
+    lcc_float16_t v = lcc_float16_from_float(-30.0f);
+    uint8_t set_cmd[3] = { LCC_TRAC_SET_SPEED_DIR, (uint8_t)(v >> 8), (uint8_t)v };
+    lcc_frame_t f = make_tc_frame(0x123, 0x456, set_cmd, sizeof(set_cmd));
+    lcc_traction_handle_frame(&n, &f);
+
     uint8_t cmd[1] = { LCC_TRAC_EMERGENCY_STOP };
-    lcc_frame_t f = make_tc_frame(0x123, 0x456, cmd, sizeof(cmd));
+    f = make_tc_frame(0x123, 0x456, cmd, sizeof(cmd));
     lcc_traction_handle_frame(&n, &f);
 
     assert(last_estop.calls == 1);
     assert(last_estop.addr == 42);
     assert(t.emergency == true);
 
+    /* Set Speed is now zero, still in reverse, with the e-stop bit set. */
+    uint8_t q_cmd[1] = { LCC_TRAC_QUERY_SPEEDS };
+    f = make_tc_frame(0x123, 0x456, q_cmd, sizeof(q_cmd));
+    lcc_traction_handle_frame(&n, &f);
+    assert(last_reply.payload[0] == LCC_TRAC_QUERY_SPEEDS);
+    assert(last_reply.payload[1] == 0x80 && last_reply.payload[2] == 0x00);
+    assert(last_reply.payload[3] & 0x80);
+
+    /* A new speed clears it. */
+    f = make_tc_frame(0x123, 0x456, set_cmd, sizeof(set_cmd));
+    lcc_traction_handle_frame(&n, &f);
+    assert(t.emergency == false);
+    assert(t.last_speed_f16 == v);
+
     printf("  PASS: emergency_stop\n");
+}
+
+/* A held global e-stop sets the e-stop bit without touching Set Speed. */
+static void test_global_estop_status(void) {
+    reset_all();
+    lcc_node_t n; lcc_train_state_t t;
+    init_node_with_train(&n, &t, 3, false, 0x222);
+
+    lcc_float16_t v = lcc_float16_from_float(42.0f);
+    uint8_t set_cmd[3] = { LCC_TRAC_SET_SPEED_DIR, (uint8_t)(v >> 8), (uint8_t)v };
+    lcc_frame_t f = make_tc_frame(0x123, 0x222, set_cmd, sizeof(set_cmd));
+    lcc_traction_handle_frame(&n, &f);
+
+    mock_estop_held = true;
+    uint8_t q_cmd[1] = { LCC_TRAC_QUERY_SPEEDS };
+    f = make_tc_frame(0x123, 0x222, q_cmd, sizeof(q_cmd));
+    lcc_traction_handle_frame(&n, &f);
+    assert(last_reply.payload[1] == (uint8_t)(v >> 8));
+    assert(last_reply.payload[2] == (uint8_t)v);
+    assert(last_reply.payload[3] & 0x80);
+
+    mock_estop_held = false;
+    lcc_traction_handle_frame(&n, &f);
+    assert((last_reply.payload[3] & 0x80) == 0);
+
+    printf("  PASS: global e-stop status\n");
 }
 
 /* ---- QUERY_SPEEDS / QUERY_FUNCTION replies ----------------------------- */
@@ -1121,6 +1171,7 @@ int main(void) {
     test_set_fn_basic();
     test_set_fn_high_range();
     test_emergency_stop();
+    test_global_estop_status();
     test_query_speeds_reply();
     test_query_function_reply();
     test_controller_assign_query_release();

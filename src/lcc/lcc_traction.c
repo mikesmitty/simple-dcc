@@ -261,6 +261,9 @@ static void on_set_fn(lcc_node_t *node, const uint8_t *payload, uint8_t len)
 
 static void on_estop(lcc_node_t *node)
 {
+    /* Train Control Standard 6.2: Set Speed becomes zero, keeping the
+     * direction (the float16 sign bit). */
+    node->train->last_speed_f16 &= 0x8000;
     node->train->emergency = true;
     if (g_hooks.emergency_stop)
         g_hooks.emergency_stop(node->train->dcc_address,
@@ -271,9 +274,12 @@ static void on_query_speeds(lcc_node_t *node, uint16_t reply_to)
 {
     /* Reply payload: 0x10 | set_f16 | status | commanded_f16 | actual_f16.
      * No feedback path yet — echo the last setpoint for all three speeds.
-     * Status bit 0x80 = estop in effect. */
+     * Status bit 0x80 = estop in effect: this train's, or a held global
+     * one, which leaves Set Speed alone. */
     lcc_float16_t v = node->train->last_speed_f16;
-    uint8_t status  = node->train->emergency ? 0x80 : 0x00;
+    bool estop = node->train->emergency ||
+                 (g_hooks.global_estop_held && g_hooks.global_estop_held());
+    uint8_t status  = estop ? 0x80 : 0x00;
     uint8_t reply[8] = {
         LCC_TRAC_QUERY_SPEEDS,
         (uint8_t)(v >> 8), (uint8_t)v,

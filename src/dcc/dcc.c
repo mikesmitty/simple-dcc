@@ -5,6 +5,7 @@
 void dcc_init(dcc_engine_t *dcc, QueueHandle_t output_queue) {
     memset(dcc->locos, 0, sizeof(dcc->locos));
     dcc->loop_state = LOOP_STATE_SPEED;
+    dcc->estop_all = false;
     dcc->mutex = xSemaphoreCreateMutex();
     configASSERT(dcc->mutex != NULL);
     dcc->output_queue = output_queue;
@@ -153,6 +154,7 @@ void dcc_set_throttle(dcc_engine_t *dcc, uint16_t address, bool is_long,
     speed_mode_t snapshot_mode = SPEED_MODE_128;
     bool         snapshot_long = is_long || address > SHORT_ADDRESS_MAX;
     bool ok = false;
+    bool held = false;
 
     xSemaphoreTake(dcc->mutex, portMAX_DELAY);
     loco_state_t *loco = find_or_create_loco_locked(dcc, address, is_long);
@@ -166,9 +168,12 @@ void dcc_set_throttle(dcc_engine_t *dcc, uint16_t address, bool is_long,
         dcc->last_throttle_speed_step = speed_step;
         ok = true;
     }
+    held = dcc->estop_all;
     xSemaphoreGive(dcc->mutex);
 
-    if (!ok) return;
+    // A held global e-stop keeps the loco stopped; the new speed goes out
+    // once it clears.
+    if (!ok || held) return;
     dcc_packet_t *pkt = build_throttle_packet(address, snapshot_long,
                                               speed_step, snapshot_mode);
     send_packet(dcc, pkt);
@@ -219,18 +224,31 @@ void dcc_set_function(dcc_engine_t *dcc, uint16_t address, bool is_long,
     xSemaphoreGive(dcc->mutex);
 }
 
+// Speed step 1 is emergency stop. Keeps the direction bit of `speed_step`.
+static uint8_t estop_step(uint8_t speed_step) {
+    return (uint8_t)((speed_step & 0x80) | 1);
+}
+
 void dcc_emergency_stop(dcc_engine_t *dcc, uint16_t address, bool is_long) {
     speed_mode_t mode = SPEED_MODE_128;
     bool         addr_is_long = is_long || address > SHORT_ADDRESS_MAX;
+    uint8_t      speed_step = 0;
     xSemaphoreTake(dcc->mutex, portMAX_DELAY);
     loco_state_t *loco = find_loco_locked(dcc, address);
     if (loco) {
+        // Train Control Standard 6.2: e-stop sets the speed to zero, keeping
+        // the direction. Otherwise the next speed reminder restarts it.
+        loco->speed_step &= 0x80;
+        speed_step = loco->speed_step;
         mode = loco->speed_mode;
         addr_is_long = loco->is_long_address;
+        if (dcc->last_throttle_valid && dcc->last_throttle_addr == address)
+            dcc->last_throttle_speed_step = speed_step;
     }
     xSemaphoreGive(dcc->mutex);
 
-    dcc_packet_t *pkt = build_throttle_packet(address, addr_is_long, 1, mode); // step 1 = estop
+    dcc_packet_t *pkt = build_throttle_packet(address, addr_is_long,
+                                              estop_step(speed_step), mode);
     if (pkt) {
         pkt->priority = PRIORITY_EMERGENCY;
         send_packet(dcc, pkt);
@@ -238,7 +256,12 @@ void dcc_emergency_stop(dcc_engine_t *dcc, uint16_t address, bool is_long) {
 }
 
 void dcc_emergency_stop_all(dcc_engine_t *dcc) {
-    // Broadcast emergency stop (address 0)
+    xSemaphoreTake(dcc->mutex, portMAX_DELAY);
+    dcc->estop_all = true;
+    xSemaphoreGive(dcc->mutex);
+
+    // Broadcast emergency stop (address 0), which also reaches locos the
+    // engine doesn't know. The reminder loop keeps the known ones stopped.
     dcc_packet_t *pkt = packet_alloc();
     if (!pkt) return;
     packet_add_byte(pkt, 0x00);
@@ -247,6 +270,19 @@ void dcc_emergency_stop_all(dcc_engine_t *dcc) {
     pkt->priority = PRIORITY_EMERGENCY;
     pkt->repeats = 3;
     send_packet(dcc, pkt);
+}
+
+void dcc_clear_emergency_stop_all(dcc_engine_t *dcc) {
+    xSemaphoreTake(dcc->mutex, portMAX_DELAY);
+    dcc->estop_all = false;
+    xSemaphoreGive(dcc->mutex);
+}
+
+bool dcc_emergency_stop_all_held(dcc_engine_t *dcc) {
+    xSemaphoreTake(dcc->mutex, portMAX_DELAY);
+    bool held = dcc->estop_all;
+    xSemaphoreGive(dcc->mutex);
+    return held;
 }
 
 void dcc_pom_write_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,
@@ -269,11 +305,16 @@ void dcc_pom_read_byte(dcc_engine_t *dcc, uint16_t address, bool is_long,
 
 static void send_reminder_packets(dcc_engine_t *dcc, loco_state_t *loco) {
     dcc_packet_t *pkt = NULL;
+    bool estop = false;
 
     switch (dcc->loop_state) {
     case LOOP_STATE_SPEED:
+        // A held global e-stop sends e-stop in place of the stored speed.
+        estop = dcc->estop_all;
         pkt = build_throttle_packet(loco->address, loco->is_long_address,
-                                    loco->speed_step, loco->speed_mode);
+                                    estop ? estop_step(loco->speed_step)
+                                          : loco->speed_step,
+                                    loco->speed_mode);
         break;
     case LOOP_STATE_FN_GROUP1:
         if (loco->group_flags & FN_GROUP1) {
@@ -361,7 +402,7 @@ static void send_reminder_packets(dcc_engine_t *dcc, loco_state_t *loco) {
     }
 
     if (pkt) {
-        pkt->priority = PRIORITY_LOW;
+        pkt->priority = estop ? PRIORITY_EMERGENCY : PRIORITY_LOW;
         pkt->repeats = 0;
         send_packet(dcc, pkt);
     }

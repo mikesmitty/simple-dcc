@@ -48,6 +48,7 @@ typedef struct {
     loco_state_t     locos[MAX_LOCOS];
     loop_state_t     loop_state;
     SemaphoreHandle_t mutex;
+    bool             estop_all;    // global e-stop held: every loco stopped, speeds kept
     QueueHandle_t    output_queue; // sends packets to priority queue
 
     // Most recent throttle command, for UI display. Updated under mutex.
@@ -72,8 +73,17 @@ void dcc_set_throttle(dcc_engine_t *dcc, uint16_t address, bool is_long,
                       uint8_t speed, bool direction);
 void dcc_set_function(dcc_engine_t *dcc, uint16_t address, bool is_long,
                       uint16_t fn_number, bool on);
+// Emergency stop for one loco. Its stored speed becomes zero (direction
+// kept), so the reminder loop doesn't start it again.
 void dcc_emergency_stop(dcc_engine_t *dcc, uint16_t address, bool is_long);
+
+// Global emergency stop: broadcasts e-stop, then holds every loco stopped
+// until dcc_clear_emergency_stop_all. Stored speeds are kept, and throttle
+// commands while held only change them; on clear the reminder loop sends
+// each loco its stored speed again.
 void dcc_emergency_stop_all(dcc_engine_t *dcc);
+void dcc_clear_emergency_stop_all(dcc_engine_t *dcc);
+bool dcc_emergency_stop_all_held(dcc_engine_t *dcc);
 
 // Programming-on-Main byte write. Emits a single NMRA POM write-byte
 // packet (repeated `repeats` times on the wire — 3 is the NMRA-

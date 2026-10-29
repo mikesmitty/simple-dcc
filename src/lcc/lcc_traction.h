@@ -59,6 +59,9 @@ typedef struct {
     void (*set_throttle)(uint16_t addr, bool is_long, uint8_t step, bool forward);
     void (*set_function)(uint16_t addr, bool is_long, uint16_t fn, bool on);
     void (*emergency_stop)(uint16_t addr, bool is_long);
+    /* True while a global emergency stop holds every train stopped. Query
+     * Speeds reports it in the e-stop status bit. May be NULL. */
+    bool (*global_estop_held)(void);
     /* POM byte-write for the traction CV space (0xF8). May be NULL for
      * hosts that don't own a DCC engine; writes are then no-ops. */
     void (*pom_write_byte)(uint16_t addr, bool is_long,

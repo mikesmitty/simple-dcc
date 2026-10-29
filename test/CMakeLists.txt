@@ -33,6 +33,16 @@ target_include_directories(test_functions PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/../src
 )
 
+add_executable(test_dcc
+    test_dcc.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/dcc/packet.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/dcc/functions.c
+)
+target_include_directories(test_dcc PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+)
+
 add_executable(test_lcc_traction
     test_lcc_traction.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/lcc/lcc_traction.c
@@ -130,6 +140,7 @@ enable_testing()
 add_test(NAME test_packet COMMAND test_packet)
 add_test(NAME test_priority_queue_logic COMMAND test_priority_queue_logic)
 add_test(NAME test_functions COMMAND test_functions)
+add_test(NAME test_dcc COMMAND test_dcc)
 add_test(NAME test_lcc_traction COMMAND test_lcc_traction)
 add_test(NAME test_lcc_memconfig COMMAND test_lcc_memconfig)
 add_test(NAME test_lcc_datagram COMMAND test_lcc_datagram)

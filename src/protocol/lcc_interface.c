@@ -502,6 +502,9 @@ static void traction_set_function(uint16_t addr, bool is_long,
 static void traction_emergency_stop(uint16_t addr, bool is_long) {
     if (g_dcc_engine) dcc_emergency_stop(g_dcc_engine, addr, is_long);
 }
+static bool traction_global_estop_held(void) {
+    return g_dcc_engine && dcc_emergency_stop_all_held(g_dcc_engine);
+}
 static void traction_pom_write_byte(uint16_t addr, bool is_long,
                                     uint16_t cv, uint8_t value) {
     if (g_dcc_engine) dcc_pom_write_byte(g_dcc_engine, addr, is_long, cv, value);
@@ -530,6 +533,7 @@ static const lcc_traction_hooks_t g_traction_hooks = {
     .set_throttle   = traction_set_throttle,
     .set_function   = traction_set_function,
     .emergency_stop = traction_emergency_stop,
+    .global_estop_held = traction_global_estop_held,
     .pom_write_byte = traction_pom_write_byte,
     .pom_read_byte  = traction_pom_read_byte,
 };
@@ -711,11 +715,13 @@ static void handle_emergency_event(lcc_node_t *node, uint64_t event_id) {
         if (g_track_main) track_set_power(g_track_main, true);
         break;
     case LCC_EVENT_EMERGENCY_STOP:
-        DBG("[LCC] EMERGENCY_STOP: all-loco estop\n");
+        DBG("[LCC] EMERGENCY_STOP: holding every loco stopped\n");
         if (g_dcc_engine) dcc_emergency_stop_all(g_dcc_engine);
         break;
     case LCC_EVENT_CLEAR_EMERG_STOP:
-        /* No protocol-level action — throttles re-send speed as needed. */
+        /* Each loco goes back to its speed (Train Control Standard 6.2). */
+        DBG("[LCC] CLEAR_EMERG_STOP: releasing the hold\n");
+        if (g_dcc_engine) dcc_clear_emergency_stop_all(g_dcc_engine);
         break;
     default:
         break;
@@ -732,6 +738,17 @@ static lcc_event_state_t power_event_state(const lcc_node_t *node,
     if (!g_track_main) return LCC_EVENT_STATE_UNKNOWN;
     bool off = !g_track_main->power_on;
     return (event_id == LCC_EVENT_EMERGENCY_OFF) == off
+           ? LCC_EVENT_STATE_VALID : LCC_EVENT_STATE_INVALID;
+}
+
+/* Emergency Stop is Valid while the global e-stop holds the locos stopped,
+ * Clear Emergency Stop otherwise. */
+static lcc_event_state_t estop_event_state(const lcc_node_t *node,
+                                           uint64_t event_id) {
+    (void)node;
+    if (!g_dcc_engine) return LCC_EVENT_STATE_UNKNOWN;
+    bool held = dcc_emergency_stop_all_held(g_dcc_engine);
+    return (event_id == LCC_EVENT_EMERGENCY_STOP) == held
            ? LCC_EVENT_STATE_VALID : LCC_EVENT_STATE_INVALID;
 }
 
@@ -797,8 +814,7 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
     lcc_memconfig_set_hooks(memcfg_reboot_hook, memcfg_factory_reset_hook);
 
     /* Emergency event consumers (well-known OpenLCB events). The off
-     * pair reports main track power; e-stop is one-shot, with no stopped
-     * state to report. */
+     * pair reports main track power, the stop pair the global e-stop. */
     lcc_events_register(&g_cs_node, LCC_EVENT_EMERGENCY_OFF,
                         LCC_EVENT_CONSUMER, handle_emergency_event,
                         power_event_state);
@@ -806,9 +822,11 @@ void lcc_interface_init(dcc_engine_t *dcc, track_t *track, QueueHandle_t pqueue_
                         LCC_EVENT_CONSUMER, handle_emergency_event,
                         power_event_state);
     lcc_events_register(&g_cs_node, LCC_EVENT_EMERGENCY_STOP,
-                        LCC_EVENT_CONSUMER, handle_emergency_event, NULL);
+                        LCC_EVENT_CONSUMER, handle_emergency_event,
+                        estop_event_state);
     lcc_events_register(&g_cs_node, LCC_EVENT_CLEAR_EMERG_STOP,
-                        LCC_EVENT_CONSUMER, handle_emergency_event, NULL);
+                        LCC_EVENT_CONSUMER, handle_emergency_event,
+                        estop_event_state);
 
     /* Optional second LCC transport: MCP2515 CAN controller over SPI.
      * lcc_task_init() above already called lcc_if_init() which registered

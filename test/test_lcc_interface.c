@@ -95,8 +95,13 @@ void dcc_set_function(dcc_engine_t *d, uint16_t a, bool is_long,
 void dcc_emergency_stop(dcc_engine_t *d, uint16_t a, bool is_long) {
     (void)d; (void)a; (void)is_long;
 }
-static int dcc_estop_all_calls;
-void dcc_emergency_stop_all(dcc_engine_t *d) { (void)d; dcc_estop_all_calls++; }
+static int  dcc_estop_all_calls;
+static bool dcc_estop_held;
+void dcc_emergency_stop_all(dcc_engine_t *d) {
+    (void)d; dcc_estop_all_calls++; dcc_estop_held = true;
+}
+void dcc_clear_emergency_stop_all(dcc_engine_t *d) { (void)d; dcc_estop_held = false; }
+bool dcc_emergency_stop_all_held(dcc_engine_t *d) { (void)d; return dcc_estop_held; }
 static int dcc_ensure_loco_calls;
 void dcc_ensure_loco(dcc_engine_t *d, uint16_t a, bool is_long) {
     (void)d; (void)a; (void)is_long; dcc_ensure_loco_calls++;
@@ -282,6 +287,7 @@ static void reset_all(void) {
     motor_a_last_limit = motor_b_last_limit = 0;
     track_power_calls = 0;
     dcc_estop_all_calls = 0;
+    dcc_estop_held = false;
     dcc_ensure_loco_calls = 0;
     g_watchdog_calls = 0;
     captured_traction_hooks = NULL;
@@ -595,6 +601,12 @@ static void test_emergency_events(void) {
 
     handle_emergency_event(&g_cs_node, LCC_EVENT_EMERGENCY_STOP);
     assert(dcc_estop_all_calls == 1);
+    assert(dcc_estop_held);
+    assert(g_traction_hooks.global_estop_held());
+
+    handle_emergency_event(&g_cs_node, LCC_EVENT_CLEAR_EMERG_STOP);
+    assert(!dcc_estop_held);
+    assert(!g_traction_hooks.global_estop_held());
 
     /* Unknown event: no-op. */
     handle_emergency_event(&g_cs_node, 0x0123456789ABCDEFULL);
@@ -706,7 +718,7 @@ static void test_pom_read_wiring(void) {
 }
 
 /* Every way the CS identifies the emergency events gives the same
- * states for the given main power. */
+ * states for the given main power and global e-stop. */
 static void check_emergency_states(uint16_t off_mti, uint16_t clear_mti) {
     static const uint64_t events[4] = {
         LCC_EVENT_EMERGENCY_OFF, LCC_EVENT_CLEAR_EMERG_OFF,
@@ -714,7 +726,10 @@ static void check_emergency_states(uint16_t off_mti, uint16_t clear_mti) {
     };
     const uint16_t want[4] = {
         off_mti, clear_mti,
-        LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN, LCC_MTI_CONSUMER_IDENTIFIED_UNKNOWN,
+        dcc_estop_held ? LCC_MTI_CONSUMER_IDENTIFIED_VALID
+                       : LCC_MTI_CONSUMER_IDENTIFIED_INVALID,
+        dcc_estop_held ? LCC_MTI_CONSUMER_IDENTIFIED_INVALID
+                       : LCC_MTI_CONSUMER_IDENTIFIED_VALID,
     };
 
     for (int i = 0; i < 4; i++) {
@@ -742,7 +757,7 @@ static void check_emergency_states(uint16_t off_mti, uint16_t clear_mti) {
 }
 
 /* Emergency Off is Valid while main power is off and Clear Emergency Off
- * while it is on; the e-stop pair stays Unknown. */
+ * while it is on; likewise Emergency Stop while the global e-stop holds. */
 static void test_power_event_state(void) {
     reset_all();
     lcc_interface_load_config();
@@ -762,7 +777,16 @@ static void test_power_event_state(void) {
     check_emergency_states(LCC_MTI_CONSUMER_IDENTIFIED_VALID,
                            LCC_MTI_CONSUMER_IDENTIFIED_INVALID);
 
-    printf("  PASS: power state in emergency event replies\n");
+    event_frame(LCC_MTI_EVENT_REPORT, LCC_EVENT_EMERGENCY_STOP);
+    assert(dcc_estop_held);
+    check_emergency_states(LCC_MTI_CONSUMER_IDENTIFIED_VALID,
+                           LCC_MTI_CONSUMER_IDENTIFIED_INVALID);
+    event_frame(LCC_MTI_EVENT_REPORT, LCC_EVENT_CLEAR_EMERG_STOP);
+    assert(!dcc_estop_held);
+    check_emergency_states(LCC_MTI_CONSUMER_IDENTIFIED_VALID,
+                           LCC_MTI_CONSUMER_IDENTIFIED_INVALID);
+
+    printf("  PASS: power and e-stop state in emergency event replies\n");
 }
 
 /* Train nodes produce Is Train with no table entry of their own; the CS
